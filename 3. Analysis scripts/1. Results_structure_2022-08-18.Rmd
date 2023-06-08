@@ -1,0 +1,145 @@
+---
+title: "Adversity-DNAm adolescence. Part 1: Results prep"
+output: html_document
+---
+
+*Setup*
+```{r setup}
+setwd("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/")
+
+```
+
+*Loading SLCMA results*
+```{r main results}
+path ="~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/Results/20200513/"
+
+#CpGs.f15 are the CpGs analyzed in the dataset
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/Results/data/CpGs.f15.Rdata")
+
+for(i in c("abuse","Fscore_fixed","r_faminstability","mompsych",
+           "nbhqual","oneadult","parcruelty" )){
+  if(i=='abuse'){ sI.all <- data.frame()}
+  print(i)
+  if(i == "r_faminstability"){
+    load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/Results/LARS_r_faminstability_stage1_FWL_sI_noever_2021-04-25.Rdata")
+  }
+  else{
+    if(i == "parcruelty"){
+    load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/Results/LARS_parcruelty_stage1_FWL_sI_noever_2022-07-13.Rdata")
+    #load("~/Desktop/LARS_parcruelty_stage1_FWL_sI_noever_overlapOld_2022-07-19.rdata")
+    }
+    else{
+      if(i == "Fscore_fixed"){
+    load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/Results/LARS_Fscore_fixed_stage1_FWL_sI_noever_2021-06-01.Rdata")
+        }
+      else{
+        load(paste(path, "LARS_", i, "_stage1_FWL_sI_noever_2020-05-13.Rdata",sep=""))
+      }
+    }
+  }
+  
+  lars.res <- as.data.frame(lapply(lars.res, unlist))
+  lars.res$FDR <- p.adjust(lars.res$P.value, method = "BH")
+  lars.res$bonf <- p.adjust(lars.res$P.value, method = "bonferroni")
+  colnames(lars.res)[7:8] <- c("CI_low", "CI_up")
+  lars.res$Model <- gsub("D", "", gsub(paste(i,"_", sep =""), "", lars.res$Variable_Name))
+  models <- unique(lars.res$Model)
+  models.2 <- models[-which(models %in% c("accumulation","ever","recency"))]
+  months <- models.2[grep("m", models.2)][order(as.numeric(gsub("m", "", 
+                                                                models.2[grep("m", models.2)]  )))]
+  years <- models.2[grep("y", models.2)][order(as.numeric(gsub("y", "", 
+                                                               models.2[grep("y", models.2)]  )))]
+  models.cor <- c(months, years, models[-which(models %in% models.2)])
+  lars.res$Model <- factor(lars.res$Model, levels = models.cor)
+  lars.res$CpG <- cpgs
+  lars.res <- lars.res[,c(ncol(lars.res),1:(ncol(lars.res)-1))]
+  
+  lars.res$Timing <- as.numeric(gsub("y", "", gsub("m","", lars.res$Model)))
+  lars.res$Timing[which(lars.res$Model %in% c("accumulation", "ever","recency"))]<-0
+  lars.res$Timing[grep("y", lars.res$Model)] <- lars.res$Timing[grep("y", lars.res$Model)]*12
+  lars.res$Timing <- as.numeric(lars.res$Timing)
+  lars.res$Timing[which(lars.res$Timing <=36)]<-"very_early"
+  lars.res$Timing[which(lars.res$Timing >36 & lars.res$Timing<=61)]<-"early"
+  lars.res$Timing[which(lars.res$Timing >61 & lars.res$Timing <=84)]<-"middle"
+  lars.res$Timing[which(lars.res$Timing %in% c(96, 108, 120,132))]<-"late"
+  lars.res$Timing[which(lars.res$Model =="accumulation")]<-"accumulation"
+  #lars.res$Timing[which(lars.res$Model =="ever")]<-"ever"
+  lars.res$Timing[which(lars.res$Model =="recency")]<-"recency"
+  lars.res$Timing <- factor(lars.res$Timing, levels = c("very_early","early","middle","late",
+                                                        "accumulation","recency"))
+  lars.res$Adversity <- i
+  
+  sI.all <- rbind(sI.all, lars.res)
+}
+
+head(sI.all)
+age15.results <- sI.all 
+
+#fixing names of Fscore
+head(age15.results[age15.results$Adversity == "Fscore_fixed",])
+age15.results$Variable_Name <- gsub("Fscore_fixed","Fscore", age15.results$Variable_Name)
+age15.results$Adversity <- gsub("Fscore_fixed","Fscore", age15.results$Adversity)
+head(age15.results[age15.results$Adversity == "Fscore",])
+
+rm(sI.all, cpgs,i , lars.res, models, models.2, models.cor, months, path, years)
+
+save(age15.results, file="/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age15.results.full_2022-08-18.Rdata")
+
+```
+Output: age15.results.full_2022-08-18.Rdata
+
+*Pulling variable probes*
+```{r detect variable probes}
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/DNAm_samples_cells_15up_notwins.Rdata", verbose=T)
+
+variability <- do.call(rbind, lapply(1:ncol(betas.f15.win.notwins), function(x){
+  if(x %% 10000 == 0){print(x)}
+  up <- quantile(betas.f15.win.notwins[,x],0.9) 
+  down <- quantile(betas.f15.win.notwins[,x],0.1)
+  list(cpg = colnames(betas.f15.win.notwins)[x],up=up, down=down, diff = up-down)
+}))
+variability <- data.frame(variability)
+save(variability, file = "CpG.variability.age15.Rdata")
+
+rm(betas.f15.win.notwins, cell.f15.notwins, samples.f15.notwins)
+```
+Output: CpG.variability.age15.Rdata
+
+*Filtering the results down to variable probes*
+```{r filter and multiple test}
+dim(age15.results)
+load("CpG.variability.age15.Rdata")
+variable.probes <- variability$cpg[which(variability$diff>0.05)]
+length(variable.probes) #302581 variable probes
+
+age15.results.variable <- age15.results[which(age15.results$CpG %in% variable.probes),]
+dim(age15.results.variable)/7
+
+#adjusting for multiple testing
+age15.results.variable$FDR <- 
+  unlist(lapply(unique(age15.results.variable$Adversity),function (x){
+    p.adjust(age15.results.variable$P.value[which(age15.results.variable$Adversity == x)], 
+                                               method ="BH") }))  
+
+age15.results.variable$bonf <- 
+  unlist(lapply(unique(age15.results.variable$Adversity),function (x){
+    p.adjust(age15.results.variable$P.value[which(age15.results.variable$Adversity == x)], 
+                                               method ="bonferroni") }))
+
+
+age15.fdr <- age15.results.variable[age15.results.variable$FDR<0.05, ]
+table(age15.fdr$Adversity)
+
+age15.fdr.R2 <- age15.results.variable[age15.results.variable$FDR<0.15 & age15.results.variable$R2>0.035,]
+table(age15.fdr.R2$Adversity)
+
+length(which(age15.results.variable$bonf<=0.05)) #5
+
+save(age15.results.variable, file="/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age15.results.variable_2022-08-18.Rdata")
+
+save(age15.fdr, age15.fdr.R2, file="/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age15.results.top_2022-08-18.Rdata")
+
+rm(variability, variable.probes, age15.fdr, age15.fdr.R2, age15.results, age15.results.variable)
+```
+Output: age15.results.variable_2022-08-18.Rdata
+        age15.results.top_2022-08-18.Rdata

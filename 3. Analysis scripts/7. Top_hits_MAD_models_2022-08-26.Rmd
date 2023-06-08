@@ -1,0 +1,429 @@
+---
+title: "Part 7. Mutually-adjusted (MAD) models"
+output: html_document
+---
+
+*Setup*
+```{r}
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(reshape)
+library(viridis)
+
+setwd("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/")
+load("Results/age15.results.top_2022-08-24.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age15.data.combined_2022-08-26.Rdata")
+
+adv.labels <- c("Caregiver physical or emotional abuse", 
+                "Sexual or physical abuse (by anyone)", 
+                "Maternal psychopathology", 
+                "One adult in the household", 
+                "Family instability", 
+                "Financial hardship", 
+                "Neighborhood disadvantage")
+names(adv.labels) <- levels(age15.fdr.R2$Adversity.2)
+
+
+##putting CpGs in correct order
+cpg.order <- age15.fdr.R2$CpG[order(age15.fdr.R2$Adversity.2, 
+                                    age15.fdr.R2$Timing, 
+                                    age15.fdr.R2$P.value)]
+r2.unique <- age15.fdr.R2$CpG[age15.fdr.R2$FDR >0.05]
+cpg.order <- cpg.order[c(which(cpg.order %in% age15.fdr$CpG),
+                         which(cpg.order %in% r2.unique)) ]
+
+rm(r2.unique)
+```
+
+*Beast prep again*
+```{r}
+##LOADING BEAST
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata", verbose=T)
+
+## adding missing variables to beast 
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/beast.adversity.aim3.2020-02-20.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/recoded_faminstability_20210424.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/parcrueltyRevised_2022-07-13.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/ALSPACnotwins.2018.08.27.Rdata", verbose=T)
+identical(beast$cidB1471, df$cidB1471) #F
+
+df <- df[match(paste0(beast$cidB1471, beast$qlet), paste0(df$cidB1471, df$qlet)),]
+colnames(df)[-which(colnames(df)%in% colnames(beast))]
+identical(beast$cidB1471, beast.adversity.aim3$cidB1471) #TRUE
+identical(beast$cidB1471, faminst.recoded.2$cidB1471) #TRUE
+beast <- cbind(beast, 
+               beast.adversity.aim3[,-which(colnames(beast.adversity.aim3)%in% colnames(beast))],
+               r_faminstability_8y = faminst.recoded.2[,-which(colnames(faminst.recoded.2)%in%
+                                                                 colnames(beast))],
+               parcruelty_11y = df[,"parcruelty_11y"],
+               Fscore_11y= df[,"Fscore_11y"])
+identical(paste0(beast$cidB1471, beast$qlet), 
+          paste0(parcrueltyRevised$cidB1471, parcrueltyRevised$qlet))
+beast$parcruelty_9y <- parcrueltyRevised$parcruelty_9y
+beast$parcruelty_11y <- parcrueltyRevised$parcruelty_11y
+
+#adding Fscore fixed
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Fscore coding issue/updated_fscore_2021-06-01.Rdata", verbose=T)
+colnames(beast)[grep("Fscore_",colnames(beast))]
+identical(fscore_fixed$ID, paste0(beast$cidB1471, beast$qlet))#T
+beast$Fscore_fixed_11y <- fscore_fixed$Fscore_fixed_11y
+#cleanup fscore
+remove <- colnames(beast)[grep("Fscore_",colnames(beast))]
+remove <- remove[-grep("_fixed",remove)]
+beast <- beast[,!colnames(beast) %in% remove]
+colnames(beast) <- gsub("Fscore_fixed_","Fscore_", colnames(beast))
+
+rm(beast.adversity.aim3, faminst.recoded.2, df, fscore_fixed, remove, parcrueltyRevised)
+
+```
+
+*Mutually-adjusted models setup*
+```{r}
+adversities <- c("oneadult","mompsych","parcruelty","r_faminstability","Fscore",
+                 "^abuse","nbhqual")
+
+for(i in adversities){
+  if(i==adversities[1]){a<-c()}
+  a<- c(a, (colnames(beast)[grep(i,colnames(beast))]))
+}
+a <- a[!a %in% c("oneadult_sum", "mompsych_g18wk","mompsych_g32wk",
+                 a[grep("nbhqual",a)][1:4])]
+
+adv.table <- data.frame(variable = a)
+adv.table$Adversity <- limma::strsplit2(gsub("_fixed", "", 
+                                             gsub("r_","", adv.table$variable)),"_")[,1]
+adv.table$Age <- limma::strsplit2(gsub("_fixed", "", gsub("r_","",
+                                                          adv.table$variable)),"_")[,2]
+adv.table$Age <- gsub("m","", gsub("D","",adv.table$Age))
+adv.table$Age[grep("y",adv.table$Age)] <- as.numeric(gsub("y","", 
+                                                          adv.table$Age[grep("y",adv.table$Age)]))*12
+adv.table$Age <- as.numeric(adv.table$Age)
+
+#sorting by age at measurement
+for(i in adversities){
+  temp <- adv.table[grep(i, adv.table$variable),]
+  temp <- temp[order(temp$Age),]
+  adv.table[grep(i, adv.table$variable),] <- temp
+  rm(temp)
+}
+barplot(adv.table$Age) #visual check
+adv.table$Timing <- ifelse(adv.table$Age <=36, "Very early",
+                           ifelse(adv.table$Age <=61, "Early",
+                                  ifelse(adv.table$Age <=84, "Middle","Late")))
+adv.table                                        
+adv.table$Ever.vars <- NA
+adv.table$Ever.age7.vars <- NA
+adv.table$After7.vars <- NA
+adv.table$Before.vars <- NA
+adv.table$SP.vars <- NA
+str(adv.table)
+
+for(i in adversities){
+  temp <- adv.table[-grep(i, adv.table$variable), ]
+  #ever
+  adv.table$Ever.vars[grep(i, adv.table$variable)] <- paste(temp$variable, collapse=",")
+  
+  #ever before age 7
+  temp.age7 <- temp[temp$Age<=84,]
+  adv.table$Ever.age7.vars[grep(i, adv.table$variable)] <- paste(temp.age7$variable, collapse=",")
+  rm(temp.age7)
+  
+  #between 8-11
+  temp.age8 <- temp[temp$Age>84,]
+  adv.table$After7.vars[grep(i, adv.table$variable)] <- paste(temp.age8$variable, collapse=",")
+  rm(temp.age8)
+  
+  #before or at adversity
+  temp.adv <- adv.table[grep(i, adv.table$variable), ]
+  for(x in 1:nrow(temp.adv)){
+    dat <- temp.adv[x,]
+    dat.other <- temp[temp$Age <= dat$Age,]
+    dat$Before.vars <- paste(dat.other$variable, collapse=",")
+    adv.table[adv.table$variable == dat$variable,] <- dat
+    rm(dat, dat.other,x)
+    }
+  
+  #at adversity or closest
+  temp.adv <- adv.table[grep(i, adv.table$variable), ]
+  for(x in 1:nrow(temp.adv)){
+    dat <- temp.adv[x,]
+    dat.other <- temp[,1:4]
+    for(n in unique(dat.other$Adversity)){
+      if(n == unique(dat.other$Adversity)[1]){closest <- c()}
+      d <- dat.other[dat.other$Adversity ==n,]
+      d$diff <- dat$Age-d$Age
+      closest <- c(closest, as.character(d$variable[abs(d$diff) == min(abs(d$diff))]))
+      rm(d, n)
+    }
+    
+    adv.table$SP.vars[adv.table$variable == dat$variable] <- paste(closest, collapse=",")
+    rm(dat, dat.other, x, closest)
+  }
+  #ever after age 7
+  rm(temp, temp.adv, i)
+}
+str(adv.table)
+#five different ways of coding the mutual adjustment
+#head(beast[,c(limma::strsplit2(adv.table$Ever.vars[46],","))])
+
+age15.fdr.R2 <- age15.fdr.R2[match(cpg.order, age15.fdr.R2$CpG),]
+
+for(i in 1:nrow(age15.fdr.R2)){
+  if(i ==1){other.exposures <- data.frame()}
+  print(i)
+  info <- age15.fdr.R2[i,]
+  head(info)
+
+  #pulling data frame with detailed information from earlier
+  dat <- data.combined[data.combined$CpG == info$CpG,]
+  
+  adv <- adv.table[adv.table$variable == info$Variable_Name,]
+   if(info$Variable_Name %in% c("accumulation", "recency")){
+    #just picking the first variable since we are going to be using all the other variables, so no need for specificity
+    adv <- adv.table[adv.table$Adversity == info$Adversity,][1,]
+  }
+  
+  #ever
+  temp <- beast[,c("cidB1471", "qlet", c(limma::strsplit2(adv$Ever.vars,",")))]
+  temp$Ever.all <- ifelse(rowSums(temp[,-c(1:2)], na.rm=T)>0, 1,
+                          ifelse(rowSums(temp[,-c(1:2)]) ==0, 0, NA))
+  dat$Ever.all <- temp$Ever.all[match(dat$ID, paste0(temp$cidB1471,temp$qlet))]
+  rm(temp)
+  
+  #ever before age 7
+  temp <- beast[,c("cidB1471", "qlet", c(limma::strsplit2(adv$Ever.age7.vars,",")))]
+  temp$Ever.age7 <- ifelse(rowSums(temp[,-c(1:2)], na.rm=T)>0, 1,
+                          ifelse(rowSums(temp[,-c(1:2)]) ==0, 0, NA))
+  dat$Ever.age7 <- temp$Ever.age7[match(dat$ID, paste0(temp$cidB1471,temp$qlet))]
+  rm(temp)
+  
+  #exposed after age 7 
+  temp <- beast[,c("cidB1471", "qlet", c(limma::strsplit2(adv$After7.vars,",")))]
+  temp$After.age7 <- ifelse(rowSums(temp[,-c(1:2)], na.rm=T)>0, 1,
+                          ifelse(rowSums(temp[,-c(1:2)]) ==0, 0, NA))
+  dat$After.age7 <- temp$After.age7[match(dat$ID, paste0(temp$cidB1471,temp$qlet))]
+  rm(temp)
+  
+  #exposed before or at adversity
+  temp <- beast[,c("cidB1471", "qlet", c(limma::strsplit2(adv$Before.vars,",")))]
+  temp$Before.SP <- ifelse(rowSums(temp[,-c(1:2)], na.rm=T)>0, 1,
+                          ifelse(rowSums(temp[,-c(1:2)]) ==0, 0, NA))
+  dat$Before.SP <- temp$Before.SP[match(dat$ID, paste0(temp$cidB1471,temp$qlet))]
+  rm(temp)
+  
+  #closest to SP
+  temp <- beast[,c("cidB1471", "qlet", c(limma::strsplit2(adv$SP.vars,",")))]
+  temp$During.SP <- ifelse(rowSums(temp[,-c(1:2)], na.rm=T)>0, 1,
+                          ifelse(rowSums(temp[,-c(1:2)]) ==0, 0, NA))
+  dat$During.SP <- temp$During.SP[match(dat$ID, paste0(temp$cidB1471,temp$qlet))]
+  rm(temp)
+  head(dat)
+    
+  
+  if(info$Variable_Name %in% c("accumulation", "recency")){
+    
+    temp <- beast[,c("cidB1471", "qlet", c(limma::strsplit2(adv$Ever.vars,",")))]
+    temp$sum <- rowSums(temp[,-c(1:2)])
+    dat$Before.SP <- temp$sum[match(dat$ID, paste0(temp$cidB1471, temp$qlet))]
+    dat$During.SP <- temp$sum[match(dat$ID, paste0(temp$cidB1471, temp$qlet))]
+    rm(temp)
+  }
+  other.exposures <- rbind(other.exposures, dat)
+  rm(dat, adv, info, i)
+}
+dim(data.combined)
+dim(other.exposures) #5 extra columns, booyakasha
+
+```
+
+
+*Mutually-adjusted models*
+```{r}
+#time for the analyses
+other.exposures.15 <- other.exposures[other.exposures$Age==15,]
+
+for(i in unique(other.exposures.15$CpG)){
+  if(i == other.exposures.15$CpG[1]){mad.models <- data.frame()}
+  dat <- other.exposures.15[other.exposures.15$CpG==i,]
+  
+  dat$Ever.all <- factor(dat$Ever.all)
+    dat$Ever.age7 <- factor(dat$Ever.age7)
+    dat$After.age7 <- factor(dat$Ever.all)
+    
+  if(!dat$Timing[1] %in% c("accumulation","recency")){
+    dat$Exposure <- factor(dat$Exposure)
+    dat$Before.SP <- factor(dat$After.age7)
+    dat$During.SP <- factor(dat$During.SP)
+    }
+  
+  temp <- rbind(tidy(lm(dnam~ Exposure +Female+White+Education+
+                                 Smoking+Parity+Momage+Birthweight, data = dat))[2,],
+                tidy(lm(dnam~ Exposure +Female+White+Education+
+                                 Smoking+Parity+Momage+Birthweight+
+                          Ever.all, data = dat))[2,],
+                tidy(lm(dnam~ Exposure +Female+White+Education+
+                                 Smoking+Parity+Momage+Birthweight+
+                          Ever.age7, data = dat))[2,],
+                tidy(lm(dnam~ Exposure +Female+White+Education+
+                                 Smoking+Parity+Momage+Birthweight+
+                          After.age7, data = dat))[2,],
+                tidy(lm(dnam~ Exposure +Female+White+Education+
+                                 Smoking+Parity+Momage+Birthweight+
+                          Before.SP, data = dat))[2,],
+                tidy(lm(dnam~ Exposure +Female+White+Education+
+                                 Smoking+Parity+Momage+Birthweight+
+                          During.SP, data = dat))[2,]
+                )
+  temp
+  temp$term <- c("Base","Ever.all","Ever.age7","After.age7","Before.SP", "During.SP")
+  temp <- data.frame(temp,
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1], 
+                     Change = temp$estimate - temp$estimate[1],
+                     Change.abs = abs(temp$estimate) - abs(temp$estimate[1]),
+                     Percent.change = round((temp$estimate/temp$estimate[1] -1)*100, 2),
+                     Percent.change.abs = round((abs(temp$estimate)/abs(temp$estimate[1]) -1)*100, 2),
+                     p.change = temp$p.value - temp$p.value[1],
+                     p.change.log = -log10(temp$p.value) - -log10(temp$p.value[1]))
+                     #Stat.change = round((temp$statistic/temp$statistic[1] -1)*100, 2))
+  temp
+  mad.models <- rbind(mad.models, temp)
+  rm(i, temp, dat)
+}
+mad.models[mad.models$Change == max(mad.models$Change),]
+mad.models[mad.models$p.value== max(mad.models$p.value),]
+dim(mad.models)
+
+#FDR correction
+mad.models$FDR <- NA
+mad.models$bonf <- NA
+for(i in unique(mad.models$term)){
+  print(i)
+  dat <- mad.models[mad.models$term ==i,]
+  dat$FDR <- p.adjust(dat$p.value, method = "BH")
+  dat$bonf <- p.adjust(dat$p.value, method = "bonferroni")
+  mad.models$FDR[mad.models$term ==i] <- dat$FDR
+  mad.models$bonf[mad.models$term ==i] <- dat$bonf
+}
+mad.models[mad.models$FDR>0.05,] #all clear
+mad.models[mad.models$bonf>0.05,] #yikes
+
+mad.models$term <- factor(mad.models$term, levels = unique(mad.models$term))
+mad.models$Adversity.2 <- adv.labels[match(mad.models$Adversity, 
+                                           names(adv.labels))]
+
+mad.models$Timing.2 <- gsub("_", " ", stringr::str_to_title(mad.models$Timing))
+
+mad.models$unique <- paste(mad.models$CpG, mad.models$Adversity.2, mad.models$Timing.2,
+                                 sep= " | ")
+
+mad.models$unique <- factor(mad.models$unique, levels = unique(mad.models$unique))           
+
+# save(mad.models, file= "~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/aim3.MADmodels_2022-08-26.Rdata")
+
+#Figure S7
+ggplot(mad.models, 
+            aes(x= -log10(p.value), y = unique, fill=term))+
+  geom_vline(xintercept = c(0), col="black")+
+  geom_bar(stat='identity', position = position_dodge(width=0.7), width=0.7)+
+  theme_classic()+
+  scale_y_discrete(limits=rev)+
+  ylab("")+
+  scale_fill_viridis(discrete=T, end =0.9, "Mutually-adjusted model",
+                     labels = c("Base",
+                                "Ever exposed 1-11",
+                                "Ever exposed 1-7",
+                                "Ever exposed 8-11",
+                                "Exposed before SP",
+                                "Exposed during SP"))+
+  geom_vline(xintercept = -log10(0.05), col="red",linetype=1,size=0.3)+
+  xlab("-log10(p-value)")+
+  geom_hline(yintercept = 19.5)
+
+#Figure S8
+ggplot(mad.models[mad.models$term != "Base",],
+           aes(x= Percent.change.abs, y = unique, fill=term))+
+  geom_vline(xintercept= c(-40,-30, -20, -10, 10, 20,30), col ="grey", size =0.2)+
+  geom_vline(xintercept= c(0), col ="black", linetype=1)+
+  geom_bar(stat='identity', position = position_dodge(width=0.7), width=0.7)+
+  theme_classic()+
+  scale_y_discrete(limits=rev)+
+  ylab("")+
+  scale_fill_viridis(discrete=T, end =0.9, "Mutually-adjusted model",
+                     labels = c("Base",
+                                "Ever exposed 1-11",
+                                "Ever exposed 1-7",
+                                "Ever exposed 8-11",
+                                "Exposed before SP",
+                                "Exposed during SP"), drop=F)+
+  #theme(legend.position = "none")+
+  xlab("Absolute change in effect estimate (%)")+
+  scale_x_continuous(breaks = c(-40, -30, -20, -10, 10, 20, 30))+
+  geom_hline(yintercept = 19.5)
+  #geom_hline(yintercept = c(3.5, 4.5, 17.5), linetype =2)+
+  #geom_hline(yintercept = c(18.5, 19.5, 22.5))
+
+mad.models.melt <- melt(mad.models)
+head(mad.models.melt)
+var.lab <- c("Estimate change (%)", "Significance change (∆ -log10[p])")
+names(var.lab) <- c("Percent.change","p.change.log")
+
+mad.models.melt$subset <- "R2-threshold sites"
+mad.models.melt.sub <- mad.models.melt[mad.models.melt$CpG %in% age15.fdr$CpG,]
+mad.models.melt.sub$subset <-"FDR-significant sites"
+mad.models.melt <- rbind(mad.models.melt, mad.models.melt.sub)
+rm(mad.models.melt.sub)
+dim(mad.models.melt)
+#Figure S9
+ggplot(mad.models.melt[mad.models.melt$variable %in% c("Percent.change") &
+                         mad.models.melt$term != "Base",], 
+       aes (y = term, x = value, fill = term))+
+  geom_vline(xintercept = 0, col="black")+
+  geom_boxplot(outlier.size = -1, alpha=0.9)+
+  geom_jitter(width = 0, height = 0.2, alpha=0.3)+
+  theme_classic()+
+  facet_wrap(~subset)+
+  #facet_wrap(~variable, scales= "free_x",
+  #           labeller = labeller(variable = var.lab))+
+  scale_fill_viridis(discrete=T, end =0.9, "Mutually-adjusted model",
+                     labels = c("Ever exposed 1-11",
+                                "Ever exposed 1-7",
+                                "Ever exposed 8-11",
+                                "Exposed before SP",
+                                "Exposed during SP"))+
+  xlab("Absolute change in effect estimate (%)")+
+  ylab("")+
+  scale_y_discrete(labels = rev(c("Ever exposed 1-11", "Ever exposed 1-7", "Ever exposed 8-11",
+                              "Exposed before SP","Exposed during SP")),
+                   limits = rev)+
+  theme(legend.position = "none")
+
+summary(mad.models$Percent.change.abs[mad.models$term=="During.SP"])
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# -38.930  -9.920  -4.330  -4.711   2.550  27.700 
+summary(mad.models$Percent.change.abs[mad.models$term=="During.SP" & 
+                                        mad.models$CpG %in% age15.fdr$CpG])
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# -38.930 -10.740  -7.420  -6.285   1.528  15.130
+
+summary(mad.models$Percent.change.abs[mad.models$Timing=="accumulation" & 
+                                        mad.models$CpG %in% age15.fdr$CpG]) #only FDR
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# -38.930  -5.545  -3.890  -7.537   0.000   1.610
+summary(mad.models$Percent.change.abs[mad.models$Timing=="recency" ]) #only R2
+#    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# -28.090  -0.510   3.590   2.021   4.935  27.700 
+max(mad.models$FDR)
+summary((mad.models$Percent.change)[mad.models$Timing=="accumulation" & mad.models$term !="Base"])
+summary(abs(mad.models$Percent.change)[mad.models$Timing=="recency" & mad.models$term !="Base"])
+summary((mad.models$Percent.change)[mad.models$Timing=="recency" & mad.models$term !="Base"])
+summary((mad.models$Percent.change[mad.models$Adversity=="oneadult" & mad.models$term =="During.SP" &
+                                     mad.models$Timing =="early"]))
+
+rm(beast, adv.table, other.exposures, other.exposures.15, i, 
+   dat,mad.models, mad.models.melt, var.lab, adversities, data.combined,
+   cpg.order, adv.labels, age15.fdr, age15.fdr.R2)
+```

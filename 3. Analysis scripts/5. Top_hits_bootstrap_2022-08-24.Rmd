@@ -1,0 +1,333 @@
+---
+title: "Adversity-DNAm adolescence. Part 5: Bootstrap"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(boot)
+library(broom)
+library(dplyr)
+library(ggplot2)
+setwd("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/")
+load("Results/age15.results.top_2022-08-24.Rdata", verbose=T)
+
+
+
+```
+
+*Preparing beast data (exposures and covariates)*
+```{r}
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata", verbose=T)
+
+
+## adding missing variables to beast 
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/beast.adversity.aim3.2020-02-20.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/recoded_faminstability_20210424.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/parcrueltyRevised_2022-07-13.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/ALSPACnotwins.2018.08.27.Rdata", verbose=T)
+identical(beast$cidB1471, df$cidB1471) #F
+
+df <- df[match(paste0(beast$cidB1471, beast$qlet), paste0(df$cidB1471, df$qlet)),]
+colnames(df)[-which(colnames(df)%in% colnames(beast))]
+identical(beast$cidB1471, beast.adversity.aim3$cidB1471) #TRUE
+identical(beast$cidB1471, faminst.recoded.2$cidB1471) #TRUE
+beast <- cbind(beast, 
+               beast.adversity.aim3[,-which(colnames(beast.adversity.aim3)%in% colnames(beast))],
+               r_faminstability_8y = faminst.recoded.2[,-which(colnames(faminst.recoded.2)%in%
+                                                                 colnames(beast))],
+               parcruelty_11y = df[,"parcruelty_11y"],
+               Fscore_11y= df[,"Fscore_11y"])
+identical(paste0(beast$cidB1471, beast$qlet), 
+          paste0(parcrueltyRevised$cidB1471, parcrueltyRevised$qlet))
+beast$parcruelty_9y <- parcrueltyRevised$parcruelty_9y
+beast$parcruelty_11y <- parcrueltyRevised$parcruelty_11y
+
+#adding Fscore fixed
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Fscore coding issue/updated_fscore_2021-06-01.Rdata", verbose=T)
+colnames(beast)[grep("Fscore_",colnames(beast))]
+identical(fscore_fixed$ID, paste0(beast$cidB1471, beast$qlet))#T
+beast$Fscore_fixed_11y <- fscore_fixed$Fscore_fixed_11y
+#cleanup fscore
+remove <- colnames(beast)[grep("Fscore_",colnames(beast))]
+remove <- remove[-grep("_fixed",remove)]
+beast <- beast[,!colnames(beast) %in% remove]
+colnames(beast) <- gsub("Fscore_fixed_","Fscore_", colnames(beast))
+
+rm(beast.adversity.aim3, faminst.recoded.2, df, fscore_fixed, remove, parcrueltyRevised)
+```
+
+*Preparing DNAm data*
+```{r}
+load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/DNAm_samples_cells_15up_notwins.Rdata", verbose=T)
+
+identical(as.character(samples.f15.notwins$Sample_Name), rownames(betas.f15.win.notwins))#TRUE
+rownames(betas.f15.win.notwins) <- paste0(samples.f15.notwins$ALN, samples.f15.notwins$QLET)
+identical(as.character(samples.f15.notwins$Sample_Name),
+          as.character(cell.f15.notwins$Sample_Name))#TRUE
+
+f15.betas <- betas.f15.win.notwins[,colnames(betas.f15.win.notwins) %in% age15.fdr.R2$CpG]
+rm(betas.f15.win.notwins)
+
+#cell type correction
+f15.beta.cor <- do.call(cbind, lapply(1:ncol(f15.betas), function(i){
+  print(i)
+  a <- lm(f15.betas[,i] ~ Bcell+ CD4T+ CD8T+ Gran+ Mono+ NK, data=cell.f15.notwins )
+  resid(a) + mean(f15.betas[,i])
+  }))
+colnames(f15.beta.cor) <- colnames(f15.betas)
+rownames(f15.beta.cor) <- rownames(f15.betas)
+
+dim(f15.beta.cor)
+
+beast.2 <- beast[match(rownames(f15.beta.cor), paste0(beast$cidB1471, beast$qlet)),]
+identical(rownames(f15.beta.cor), paste0(beast.2$cidB1471, beast.2$qlet)) #TRUE
+identical(paste0(samples.f15.notwins$ALN, samples.f15.notwins$QLET), 
+          paste0(beast.2$cidB1471, beast.2$qlet)) #TRUE
+beast.2$age <- samples.f15.notwins$age
+
+
+rm(beast, f15.betas, cell.f15.notwins)
+```
+
+*Creating the bootstrap function*
+```{r}
+#https://www.statmethods.net/advstats/bootstrapping.html
+#https://towardsdatascience.com/a-practical-guide-to-bootstrap-with-r-examples-bd975ec6dcea
+#https://cran.r-project.org/web/packages/boot/boot.pdf
+
+function_boot_estimate <- function(data, i){
+ d2 <- data[i,] #i comes from the boot() function - random selection of samples with resampling
+ res <- tidy(lm(DNAm ~ exposure + ed_momgest +WHITE + Female + 
+                  mom_birthage + ppregnum + birthweight +
+                  sustained.smoke + age, data = d2)) 
+ return(res$estimate[2]) #return the effect estimate (i.e., coefficient) for the exposure only
+}
+
+```
+
+*Association testing and bootstrapping for age 15 hits - random-x resampling*
+```{r}
+covars <- c("ed_momgest", "WHITE", "Female", "mom_birthage", "ppregnum",
+                     "birthweight","sustained.smoke", "age")
+
+
+#loop for the 41 CpGs that met the R2 threshold in the original analysis
+for(i in 1:nrow(age15.fdr.R2)){
+  #loop setting - should probably turn this into a function... 
+  run.boot = T #use to determine whether the bootstrap should be run
+  #starting
+  ptm <- proc.time() #start time
+  print(paste0("Preparing data for CpG #", i))
+  if(i == 1){
+    f15.associations <- data.frame()} #empty data frame to save association test into
+  temp <- age15.fdr.R2[i,] #select CpG data
+  age15 <- f15.beta.cor[,colnames(f15.beta.cor) == temp$CpG] #get DNAm data for CpG
+
+  #formatting of adversity data base on hypothesis selected from the SLCMA
+  b <- colnames(beast.2)[grep(paste0("^", temp$Adversity), colnames(beast.2))]
+  if(temp$Adversity =="mompsych"){b <- b[-grep("wk",b)]}
+  if(temp$Adversity =="oneadult"){b <- b[-grep("sum", b)]}
+  recency.vec <- gsub("m", "", gsub(paste0(temp$Adversity,"_"),"",b))
+  recency.vec[grep("y",recency.vec)] <- as.numeric(gsub("y","",
+                                                              recency.vec[grep("y",recency.vec)]))*12
+  recency.vec <- as.numeric(recency.vec)/12
+  
+  #exposure is the data frame for the data to be analyzed
+  exposure <- beast.2[,colnames(beast.2) %in% c("cidB1471","qlet", covars, b)]
+  
+  #sanity check to make sure DNAm and exposure data match
+  if(identical(names(age15), paste0(exposure$cidB1471, exposure$qlet)) ==F){
+    return("Error - exposure and DNAm data do not match")
+  }
+  
+  #using only complete cases 
+  age15 <- age15[complete.cases(exposure)]
+  exposure <- exposure[complete.cases(exposure),]
+  
+  #formatting recency variable, if needed
+  if(temp$Variable_Name == "recency"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="recency"] <- "exposure"
+    rm(exp)
+  }
+  
+  #formatting accumulation variable, if needed
+  if(temp$Variable_Name == "accumulation"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="accumulation"] <- "exposure"
+    rm(exp)
+  }
+  else{
+  #selected hypothesis column is renamed exposure for ease of calling in next steps
+  colnames(exposure)[colnames(exposure) == temp$Variable_Name] <- "exposure" 
+  }
+  
+  exposure$sum <- rowSums(exposure[,colnames(exposure) %in% b]) #used to determine DNAm values for those exposed at other timepoints
+  exposure$DNAm <- age15 #putting DNAm data into the proper data frame
+  
+  #setting baseline
+  print("Running baseline association test")
+  res.lm <- lm(DNAm ~ exposure + ed_momgest +WHITE + Female + 
+                  mom_birthage + ppregnum + birthweight +
+                  sustained.smoke + age, data = exposure)
+  res <- tidy(res.lm)
+  confint(res.lm)
+  a <- data.frame(Cpg = temp$CpG,
+             Variable_Name = temp$Variable_Name, 
+             Model = temp$Model,
+             Timing = temp$Timing,
+             Adversity = temp$Adversity, 
+             p.value = res$p.value[2], #2 is the exposure to adversity
+             estimate = res$estimate[2], 
+             statistic = res$statistic[2],
+             std.error = res$std.error[2],
+             CI_low = confint(res.lm)[2,1],
+             CI_high = confint(res.lm)[2,2],
+             beta.unexp = mean(age15[which(exposure$exposure==0)]), #average DNAm for unexposed
+             beta.exp = mean(age15[which(exposure$exposure>0)]), #average DNAm for exposed
+             beta.unexp.all = mean(age15[which(exposure$sum==0 & exposure$exposure==0)]), #average DNAm for unexposed
+             beta.exp.other = mean(age15[which(exposure$sum>0)])) #average DNAm for exposed in other SP
+  a$delta <- a$beta.exp - a$beta.unexp #delta beta calculation
+  
+  f15.associations <- rbind(f15.associations, a) #putting data together 
+  
+  rm(a)
+  #starting bootstrap
+  #estimate
+  if(run.boot == TRUE){
+  if(i==1){
+    estimates.boot <- data.frame()} #empty data frame in which to save bootstrap
+    
+  print("Starting bootstrap of estimate")
+  set.seed(17) #seed to maintain consistency in reruns
+  bootstrap <- boot(exposure, function_boot_estimate, R=10000) #10000 resamples; function defined in previous chunk
+   #bootstrap returns a df of t (in this case, the effect estimate for the exposure)
+  boot.ci(bootstrap)
+  boot
+  
+  a <- data.frame(Cpg = temp$CpG,
+             Variable_Name = temp$Variable_Name, 
+             Model = temp$Model,
+             Timing = temp$Timing,
+             Adversity = temp$Adversity, 
+             p.value = res$p.value[2], #p-value from the linear regression 
+             estimate = bootstrap$t0, #estimate from the linear regression
+             mean = mean(bootstrap$t), #mean estimate of the bootstraps
+             sd = sd(bootstrap$t), #sd of bootstraps
+             range_low = range(bootstrap$t)[1], #lowest value
+             range_high = range(bootstrap$t)[2], #largest value
+             CI_low = norm.ci(bootstrap)[2], #confidence intervals using normal approximation
+             CI_high = norm.ci(bootstrap)[3],
+             CI_low_BCA = boot.ci(bootstrap)$bca[4], #confidence intervals using bias-adjustment 
+             CI_high_BCA = boot.ci(bootstrap)$bca[5]
+             )
+  estimates.boot <- rbind(estimates.boot,a)
+  rm(a, bootstrap)
+  }
+ 
+  print(proc.time() - ptm) #print out how long it took for that CpG
+  rm(res, b, exposure, age15, temp, recency.vec, ptm, run.boot, res.lm) #cleanup 
+}
+head(f15.associations)
+head(estimates.boot)
+
+#calculating the bootstrap bias
+#mean = bootstrapped estimates, estimate= original estimate
+estimates.boot$bias <- estimates.boot$mean - estimates.boot$estimate 
+summary(estimates.boot$bias)
+summary(abs(estimates.boot$bias))
+
+#saving file - commented out to prevent overwritting 
+# save(f15.associations, estimates.boot,
+#      file = "~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/aim3_bootstrapping_2022-08-25.Rdata")
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/aim3_bootstrapping_2022-08-25.Rdata")
+write.table(estimates.boot, file = "~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Tables/aim3.bootstrap_2022-08-25.txt", 
+            sep="\t", quote=F, col.names = T, row.names = F)
+write.table(f15.associations, file = "~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Tables/aim3.f15.associations_2022-08-25.txt", 
+            sep="\t", quote=F, col.names = T, row.names = F)
+
+write.table()
+
+rm(beast.2, covars, estimates.boot, f15.associations, 
+   f15.beta.cor, function_boot_estimate, i, samples.f15.notwins)
+```
+
+
+*Good estimates plot - for publication*
+```{r}
+#loading data
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/aim3_bootstrapping_2022-08-25.Rdata", verbose=T)
+estimates.boot
+
+##putting CpGs in correct order
+cpg.order <- age15.fdr.R2$CpG[order(age15.fdr.R2$Adversity.2, 
+                                    age15.fdr.R2$Timing, 
+                                    age15.fdr.R2$P.value)]
+r2.unique <- age15.fdr.R2$CpG[age15.fdr.R2$FDR >0.05]
+cpg.order <- cpg.order[c(which(cpg.order %in% age15.fdr$CpG),
+                         which(cpg.order %in% r2.unique)) ]
+
+f15.associations <- f15.associations[match(cpg.order, f15.associations$Cpg),]
+estimates.boot <- estimates.boot[match(cpg.order, estimates.boot$Cpg),]
+identical(as.character(estimates.boot$Cpg), cpg.order)
+rm(cpg.order, r2.unique)
+
+#making combined estimates plot
+f15.associations$Analysis <- "Original"
+estimates.boot$Analysis <- "Bootstrap"
+colnames(f15.associations[,c(1:5,7,9:11,17)])
+colnames(estimates.boot[,c(1:5,7,9,12,13,17)])
+colnames(estimates.boot)[9] <- "std.error"
+estimates.combined <- rbind(f15.associations[,c(1:5,7,9:11,17)],
+                            estimates.boot[,c(1:5,7,9,12,13,17)])
+dim(estimates.combined)
+#the estimate for bootstrap should be the mean, rather than the original estimate
+estimates.combined$estimate[estimates.combined$Analysis=="Bootstrap"] <- estimates.boot$mean
+range(estimates.boot$estimate - estimates.boot$mean) #very small differences
+
+#recoding the adversity for proper graphing
+estimates.combined$Adversity.2 <- adv.labels[match(estimates.combined$Adversity, 
+                                                   names(adv.labels))]
+
+estimates.combined$Timing.2 <- gsub("_", " ", stringr::str_to_title(estimates.combined$Timing))
+
+estimates.combined$unique <- paste(estimates.combined$Cpg, estimates.combined$Adversity.2,
+                                      estimates.combined$Timing.2, sep= " | ")
+estimates.combined$unique <- factor(estimates.combined$unique,
+                                    levels = unique(estimates.combined$unique))
+# estimates.combined$unique <- factor(estimates.combined$unique, 
+#                                   levels = unique(estimates.combined$unique)[c(23,24,1:4,6,5,7:11,
+#                                                                                13:16,19:22,12,17:18)]) 
+#Plot for publication
+ggplot(estimates.combined, aes(y = unique,
+                               col=Analysis))+
+  geom_point(aes(x = estimate), shape =3, position = position_dodge(w=1))+
+  geom_errorbar(aes(xmin = CI_low, xmax=CI_high),position = position_dodge(w=1))+
+  theme_classic()+
+  ylab("")+
+  xlab("Effect estimate with 95% CI intervals")+
+  geom_vline(xintercept=0, linetype=3)+
+  scale_color_manual(values = c("black","red"))+
+  scale_y_discrete(limits=rev)+
+  theme(axis.text = element_text(size =12), 
+        axis.title = element_text(size =12),
+        legend.text = element_text(size = 10))+
+  geom_hline(yintercept = 19.5)
+
+rm(estimates.boot, estimates.combined, f15.associations)
+
+```
