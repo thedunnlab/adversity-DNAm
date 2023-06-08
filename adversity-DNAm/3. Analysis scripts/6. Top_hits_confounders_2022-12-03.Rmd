@@ -1,0 +1,1413 @@
+---
+title: "Part 6. Confounders"
+output: html_document
+---
+
+*Setup*
+```{r}
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(mediation)
+library(viridis)
+
+setwd("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/")
+load("Results/age15.results.top_2022-08-24.Rdata", verbose=T)
+
+
+adv.labels <- c("Caregiver physical or emotional abuse", 
+                "Sexual or physical abuse (by anyone)", 
+                "Maternal psychopathology", 
+                "One adult in the household", 
+                "Family instability", 
+                "Financial hardship", 
+                "Neighborhood disadvantage")
+names(adv.labels) <- levels(age15.fdr.R2$Adversity.2)
+
+
+##putting CpGs in correct order
+cpg.order <- age15.fdr.R2$CpG[order(age15.fdr.R2$Adversity.2, 
+                                    age15.fdr.R2$Timing, 
+                                    age15.fdr.R2$P.value)]
+r2.unique <- age15.fdr.R2$CpG[age15.fdr.R2$FDR >0.05]
+cpg.order <- cpg.order[c(which(cpg.order %in% age15.fdr$CpG),
+                         which(cpg.order %in% r2.unique)) ]
+
+
+```
+
+*Making full data frame*
+```{r}
+#cell type correction for cord samples
+load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC_DNAm_differences/data/betas_Cord_WIN_20200128.Rdata", verbose=T)
+cord.samples <- read.table("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC_DNAm_differences/data/samplesheet_Cord_20200121.txt", sep ="\t", header=T)
+cord.cells <- read.table("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC_DNAm_differences/data/celltypes_Cord_20200121.txt", sep ="\t", header=T)
+identical(as.character(cord.samples$Sample_Name), rownames(betas.cord.win))#TRUE
+rownames(betas.cord.win) <- paste0(cord.samples$ALN, cord.samples$QLET)
+identical(as.character(cord.samples$Sample_Name), as.character(cord.cells$IID))#TRUE
+
+cord.betas <- betas.cord.win[,colnames(betas.cord.win) %in% age15.fdr.R2$CpG]
+dim(cord.betas)
+rm(betas.cord.win)
+
+cord.beta.cor <- do.call(cbind, lapply(1:ncol(cord.betas), function(i){
+  print(i)
+  a <- lm(cord.betas[,i] ~ Bcell+ CD4T+ CD8T+ Gran+ Mono+ NK+ nRBC, data=cord.cells )
+  resid(a) + mean(cord.betas[,i])
+}))
+colnames(cord.beta.cor) <- colnames(cord.betas)
+rownames(cord.beta.cor) <- rownames(cord.betas)
+scatter.smooth(cord.beta.cor~cord.beta.cor)
+rm(cord.betas, cord.cells)
+##cord.betas.cor
+
+#### cell type correction for age 7 ####
+load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC_DNAm_differences/data/betas_F7_WIN_20200128.Rdata", verbose=T)
+f7.samples <- read.table("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC_DNAm_differences/data/samplesheet_F7_20200121.txt", sep ="\t", header=T)
+f7.cells <- read.table("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC_DNAm_differences/data/celltypes_F7_20200121.txt", sep ="\t", header=T)
+identical(as.character(f7.samples$Sample_Name), rownames(betas.f7.win))#TRUE
+rownames(betas.f7.win) <- paste0(f7.samples$ALN, f7.samples$QLET)
+identical(as.character(f7.samples$Sample_Name), as.character(f7.cells$Sample_Name))#TRUE
+
+f7.betas <- betas.f7.win[,colnames(betas.f7.win) %in% age15.fdr.R2$CpG]
+dim(f7.betas)
+rm(betas.f7.win)
+
+f7.beta.cor <- do.call(cbind, lapply(1:ncol(f7.betas), function(i){
+  print(i)
+  a <- lm(f7.betas[,i] ~ Bcell+ CD4T+ CD8T+ Gran+ Mono+ NK, data=f7.cells )
+  resid(a) + mean(f7.betas[,i])
+}))
+colnames(f7.beta.cor) <- colnames(f7.betas)
+rownames(f7.beta.cor) <- rownames(f7.betas)
+scatter.smooth(f7.beta.cor~f7.beta.cor)
+rm(f7.betas, f7.cells)
+# f7.betas.cor
+
+#### cell type correction for age 15 ####
+load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/DNAm_samples_cells_15up_notwins.Rdata", verbose=T)
+
+identical(as.character(samples.f15.notwins$Sample_Name), rownames(betas.f15.win.notwins))#TRUE
+rownames(betas.f15.win.notwins) <- paste0(samples.f15.notwins$ALN, samples.f15.notwins$QLET)
+identical(as.character(samples.f15.notwins$Sample_Name),
+          as.character(cell.f15.notwins$Sample_Name))#TRUE
+
+f15.betas <- betas.f15.win.notwins[,colnames(betas.f15.win.notwins) %in% age15.fdr.R2$CpG]
+rm(betas.f15.win.notwins)
+
+
+f15.beta.cor <- do.call(cbind, lapply(1:ncol(f15.betas), function(i){
+  print(i)
+  a <- lm(f15.betas[,i] ~ Bcell+ CD4T+ CD8T+ Gran+ Mono+ NK, data=cell.f15.notwins )
+  resid(a) + mean(f15.betas[,i])
+}))
+colnames(f15.beta.cor) <- colnames(f15.betas)
+rownames(f15.beta.cor) <- rownames(f15.betas)
+rm(f15.betas, cell.f15.notwins)
+
+sum(rownames(f15.beta.cor)[(rownames(f15.beta.cor) %in% rownames(f7.beta.cor))] %in%
+      rownames(cord.beta.cor))
+sum(rownames(f15.beta.cor) %in% rownames(f7.beta.cor)) 
+
+
+##LOADING BEAST
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata", verbose=T)
+
+## adding missing variables to beast 
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/beast.adversity.aim3.2020-02-20.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/recoded_faminstability_20210424.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/parcrueltyRevised_2022-07-13.Rdata", verbose=T)
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Aim 3/Adversity_prelim/ALSPACnotwins.2018.08.27.Rdata", verbose=T)
+identical(beast$cidB1471, df$cidB1471) #F
+
+df <- df[match(paste0(beast$cidB1471, beast$qlet), paste0(df$cidB1471, df$qlet)),]
+colnames(df)[-which(colnames(df)%in% colnames(beast))]
+identical(beast$cidB1471, beast.adversity.aim3$cidB1471) #TRUE
+identical(beast$cidB1471, faminst.recoded.2$cidB1471) #TRUE
+beast <- cbind(beast, 
+               beast.adversity.aim3[,-which(colnames(beast.adversity.aim3)%in% colnames(beast))],
+               r_faminstability_8y = faminst.recoded.2[,-which(colnames(faminst.recoded.2)%in%
+                                                                 colnames(beast))],
+               parcruelty_11y = df[,"parcruelty_11y"],
+               Fscore_11y= df[,"Fscore_11y"])
+identical(paste0(beast$cidB1471, beast$qlet), 
+          paste0(parcrueltyRevised$cidB1471, parcrueltyRevised$qlet))
+beast$parcruelty_9y <- parcrueltyRevised$parcruelty_9y
+beast$parcruelty_11y <- parcrueltyRevised$parcruelty_11y
+
+#adding Fscore fixed
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Fscore coding issue/updated_fscore_2021-06-01.Rdata", verbose=T)
+colnames(beast)[grep("Fscore_",colnames(beast))]
+identical(fscore_fixed$ID, paste0(beast$cidB1471, beast$qlet))#T
+beast$Fscore_fixed_11y <- fscore_fixed$Fscore_fixed_11y
+#cleanup fscore
+remove <- colnames(beast)[grep("Fscore_",colnames(beast))]
+remove <- remove[-grep("_fixed",remove)]
+beast <- beast[,!colnames(beast) %in% remove]
+colnames(beast) <- gsub("Fscore_fixed_","Fscore_", colnames(beast))
+
+rm(beast.adversity.aim3, faminst.recoded.2, df, fscore_fixed, remove, parcrueltyRevised)
+
+
+covars <- c("ed_momgest", "WHITE", "Female", "mom_birthage", "ppregnum",
+            "birthweight","sustained.smoke")
+#"sample_type")
+
+#making full data frame
+
+for(i in 1:nrow(age15.fdr.R2)){
+  if(i ==1){data.combined <- data.frame()}
+  temp <- age15.fdr.R2[i,]
+  print(i)
+  print("birth")
+  age0 <- cord.beta.cor[,colnames(cord.beta.cor) == temp$CpG]
+  
+  b <- colnames(beast)[grep(paste0("^", temp$Adversity), colnames(beast))]
+  if(temp$Adversity =="mompsych"){b <- b[-grep("wk",b)]}
+  if(temp$Adversity =="oneadult"){b <- b[-grep("sum", b)]}
+  recency.vec <- gsub("m", "", gsub(paste0(temp$Adversity,"_"),"",b))
+  recency.vec[grep("y",recency.vec)] <- as.numeric(gsub("y","",
+                                                        recency.vec[grep("y",recency.vec)]))*12
+  recency.vec <- as.numeric(recency.vec)/12
+  
+  exposure <- beast[,colnames(beast) %in% c("cidB1471", covars, b)]
+  exposure <- exposure[match(cord.samples$ALN, exposure$cidB1471),]
+  age0 <- age0[complete.cases(exposure)]
+  exposure <- exposure[complete.cases(exposure),]
+  
+  if(temp$Variable_Name == "recency"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="recency"] <- "exposure"
+    rm(exp)
+  }
+  if(temp$Variable_Name == "accumulation"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="accumulation"] <- "exposure"
+    rm(exp)
+  }
+  
+  else{
+    colnames(exposure)[colnames(exposure) == temp$Variable_Name] <- "exposure"
+  }
+  exposure$sum <- rowSums(exposure[,colnames(exposure) %in% b])
+  
+  dat.age0 <- data.frame(CpG = temp$CpG, 
+                         dnam = age0,
+                         Age = 0,
+                         Timing = temp$Timing,
+                         Adversity = temp$Adversity,
+                         ID = names(age0),
+                         Exposure = exposure$exposure,
+                         Group = ifelse(exposure$sum==0 & exposure$exposure==0, "Unexposed", 
+                                        ifelse(exposure$exposure>0, "Exposed-SP","Exposed-other")),
+                         Female = exposure$Female,
+                         White = exposure$WHITE,
+                         Education = exposure$ed_momgest,
+                         Smoking = exposure$sustained.smoke,
+                         Parity = exposure$ppregnum,
+                         Momage = exposure$mom_birthage,
+                         Birthweight = exposure$birthweight
+                         )
+  rm(b, exposure, age0, recency.vec)
+                        
+  print("age 7")
+  
+  age7 <- f7.beta.cor[,colnames(f7.beta.cor) == temp$CpG]
+  
+  
+  b <- colnames(beast)[grep(paste0("^", temp$Adversity), colnames(beast))]
+  if(temp$Adversity =="mompsych"){b <- b[-grep("wk",b)]}
+  if(temp$Adversity =="oneadult"){b <- b[-grep("sum", b)]}
+  recency.vec <- gsub("m", "", gsub(paste0(temp$Adversity,"_"),"",b))
+  recency.vec[grep("y",recency.vec)] <- as.numeric(gsub("y","",
+                                                        recency.vec[grep("y",recency.vec)]))*12
+  recency.vec <- as.numeric(recency.vec)/12
+  
+  
+  exposure <- beast[,colnames(beast) %in% c("cidB1471", covars, b)]
+  exposure <- exposure[match(f7.samples$ALN, exposure$cidB1471),]
+  age7 <- age7[complete.cases(exposure)]
+  exposure <- exposure[complete.cases(exposure),]
+  
+  if(temp$Variable_Name == "recency"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="recency"] <- "exposure"
+    rm(exp)
+  }
+  
+  if(temp$Variable_Name == "accumulation"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="accumulation"] <- "exposure"
+    rm(exp)
+  }
+  
+  else{
+    colnames(exposure)[colnames(exposure) == temp$Variable_Name] <- "exposure"
+  }
+  exposure$sum <- rowSums(exposure[,colnames(exposure) %in% b])
+  
+  dat.age7 <- data.frame(CpG = temp$CpG, 
+                         dnam = age7,
+                         Age = 7,
+                         Timing = temp$Timing,
+                         Adversity = temp$Adversity,
+                         ID = names(age7),
+                         Exposure = exposure$exposure,
+                         Group = ifelse(exposure$sum==0 & exposure$exposure==0, "Unexposed", 
+                                        ifelse(exposure$exposure>0, "Exposed-SP","Exposed-other")),
+                         Female = exposure$Female,
+                         White = exposure$WHITE,
+                         Education = exposure$ed_momgest,
+                         Smoking = exposure$sustained.smoke,
+                         Parity = exposure$ppregnum,
+                         Momage = exposure$mom_birthage,
+                         Birthweight = exposure$birthweight
+                         )
+                         
+  rm(b, exposure, age7, recency.vec)
+  
+  print("age15")
+  
+  age15 <- f15.beta.cor[,colnames(f15.beta.cor) == temp$CpG]
+  
+  b <- colnames(beast)[grep(paste0("^", temp$Adversity), colnames(beast))]
+  if(temp$Adversity =="mompsych"){b <- b[-grep("wk",b)]}
+  if(temp$Adversity =="oneadult"){b <- b[-grep("sum", b)]}
+  recency.vec <- gsub("m", "", gsub(paste0(temp$Adversity,"_"),"",b))
+  recency.vec[grep("y",recency.vec)] <- as.numeric(gsub("y","",
+                                                        recency.vec[grep("y",recency.vec)]))*12
+  recency.vec <- as.numeric(recency.vec)/12
+  
+  
+  exposure <- beast[,colnames(beast) %in% c("cidB1471", covars, b)]
+  exposure <- exposure[match(samples.f15.notwins$ALN, exposure$cidB1471),]
+  age15 <- age15[complete.cases(exposure)]
+  exposure <- exposure[complete.cases(exposure),]
+  
+  if(temp$Variable_Name == "recency"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="recency"] <- "exposure"
+    rm(exp)
+  }
+  
+  if(temp$Variable_Name == "accumulation"){
+    exp <- do.call("cbind", lapply(exposure[, colnames(exposure) %in% b], 
+                                   function(x) as.numeric(as.character(x))))
+    exposure <- exposure %>% 
+      mutate(accumulation = rowSums(exp)) %>% 
+      mutate(ever = ifelse(accumulation > 0, 1, 0))
+    exposure$recency <-  rowSums(exp %*% diag(recency.vec))
+    
+    colnames(exposure)[colnames(exposure)=="accumulation"] <- "exposure"
+    rm(exp)
+  }
+  else{
+    colnames(exposure)[colnames(exposure) == temp$Variable_Name] <- "exposure"
+  }
+  exposure$sum <- rowSums(exposure[,colnames(exposure) %in% b])
+  
+  
+  dat.age15 <- data.frame(CpG = temp$CpG, 
+                         dnam = age15,
+                         Age = 15,
+                         Timing = temp$Timing,
+                         Adversity = temp$Adversity,
+                         ID = names(age15),
+                         Exposure = exposure$exposure,
+                         Group = ifelse(exposure$sum==0 & exposure$exposure==0, "Unexposed", 
+                                        ifelse(exposure$exposure>0, "Exposed-SP","Exposed-other")),
+                         Female = exposure$Female,
+                         White = exposure$WHITE,
+                         Education = exposure$ed_momgest,
+                         Smoking = exposure$sustained.smoke,
+                         Parity = exposure$ppregnum,
+                         Momage = exposure$mom_birthage,
+                         Birthweight = exposure$birthweight
+                         )
+  
+  data.combined <- rbind(data.combined, dat.age0, dat.age7, dat.age15)
+  
+  
+  rm(b, exposure, age15, recency.vec, dat.age0, dat.age7, dat.age15, i, temp)
+
+}
+
+dim(data.combined)/24
+head(data.combined)
+
+rm(cord.beta.cor, cord.samples, 
+   f7.beta.cor, f7.samples, 
+   f15.beta.cor, samples.f15.notwins,
+   beast, covars)
+
+data.combined$Age <- factor(data.combined$Age, levels = c(0, 7, 15))
+data.combined$Group <- factor(data.combined$Group, 
+                              levels = c("Unexposed","Exposed-other","Exposed-SP"))
+for(i in unique(data.combined$CpG)){
+  a <- data.combined[data.combined$CpG==i,]
+  cat(length(unique(a$ID[a$Age ==0]))," - ", length(unique(a$ID[a$Age ==7])),
+             " - ",length(unique(a$ID[a$Age ==15])),"\n")
+  rm(a,i)
+}
+
+save(data.combined, 
+     file ="~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age15.data.combined_2022-08-26.Rdata")
+head(data.combined)
+```
+
+*Confounders age 15*
+```{r}
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age15.data.combined_2022-08-26.Rdata")
+data.combined.15  <- data.combined[data.combined$Age==15,]
+head(data.combined.15)
+length(unique(data.combined.15$CpG)) #41
+
+head(data.combined)
+str(data.combined.15$Exposure ) #remember to change to factor for all except accumulation
+data.combined.15$Female <- factor(data.combined.15$Female)
+data.combined.15$White <- factor(data.combined.15$White)
+data.combined.15$Education <- factor(data.combined.15$Education)
+data.combined.15$Smoking <- factor(data.combined.15$Smoking)
+data.combined.15$Parity <- factor(data.combined.15$Parity)
+data.combined.15$Momage <- factor(data.combined.15$Momage)
+
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata", verbose=T)
+
+data.combined.15$SES_parent <- beast$SES_parent[match(data.combined.15$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.15$SES_parent <- factor(data.combined.15$SES_parent)
+
+data.combined.15$BMI_prepreg <- beast$dw042[match(data.combined.15$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.15$gest_age <- beast$bestgest[match(data.combined.15$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.15$gest_age <- ifelse(data.combined.15$gest_age<0, NA, 
+                                    data.combined.15$gest_age)
+data.combined.15$csection <- beast$DEL_P4[match(data.combined.15$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.15$csection <- ifelse(data.combined.15$csection ==1, 0,
+                                    ifelse(data.combined.15$csection==2, 1, NA))
+data.combined.15$csection <- as.factor(data.combined.15$csection)
+
+# df <- beast[, c("SES_parent", grep("^oneadult", names(beast), value = TRUE))]
+# for(i in 1:ncol(df)){df[,i]<-as.factor(df[,i])}
+# head(df)
+# df <- df[complete.cases(df),]
+# 
+# cor_SES <- psych::polychoric(df)
+# cor_SES
+# ggcorrplot(cor_SES$rho, tl.cex = 9, show.legend = FALSE, 
+#            type = "lower", lab = TRUE, show.diag = FALSE,
+#            title = "One adult household") 
+
+for(i in cpg.order){
+  if(i == cpg.order[1]){summary.confound <- data.frame()}
+  print(i)
+  dat <- data.combined.15[data.combined.15$CpG == i,]
+  if(! dat$Timing[1] %in% c("accumulation", "recency")){dat$Exposure <- factor(dat$Exposure)}
+  
+  # checking assumption of zero conditional mean
+  # i=cpg.order[12]
+  # i=cpg.order[41]
+  # dat <- data.combined.15[data.combined.15$CpG == i,]
+  # a <- (lm(dnam~ Exposure + Female+White+Education+Smoking+Parity+Momage+Birthweight,
+  #                       data = dat))
+  # plot(a$residuals, sub = dat$CpG)
+  # abline(h=0, col="red")
+  
+  temp <- rbind(tidy(lm(dnam~ Exposure +
+                        Female+White+Education+ Smoking+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          White+Education+Smoking+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+Education+Smoking+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Smoking+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure 
+                        +Female+White+Education+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          SES_parent,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          gest_age,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          BMI_prepreg,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          csection,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+SES_parent,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+
+                          Smoking+Parity+Momage+Birthweight+csection+BMI_prepreg+gest_age,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+SES_parent+
+                          Smoking+Parity+Momage+Birthweight+csection+BMI_prepreg+gest_age,
+                        data = dat))[2,]
+                )
+
+  temp$term <- c("Base","Sex","Ethnicity","Education","Smoking",
+                 "Parity","Maternal age","Birthweight",
+                 "Parent SEP","Gestational age","Pre-pregnancy BMI", "C-section",
+                 "SES variables","Biological variables","All variables")
+  temp <- data.frame(temp,
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1], 
+                     Change = temp$estimate - temp$estimate[1],
+                     Percent.change = round((temp$estimate/temp$estimate[1] -1)*100, 2))
+                     #Stat.change = round((temp$statistic/temp$statistic[1] -1)*100, 2))
+  temp
+  summary.confound <- rbind(summary.confound, temp)
+  rm(i, temp, dat)
+}
+
+# i="cg04659536"
+dim(summary.confound)/41 #12 confounders analyzed
+tail(summary.confound)
+summary(summary.confound$Percent.change)
+summary.confound[which(abs(summary.confound$Percent.change)>10),]
+max(summary.confound$p.value)
+summary.confound[summary.confound$p.value>0.0012,]
+
+summary.confound$Analysis <- "Covariates removed from base model"
+summary.confound$Analysis[summary.confound$term %in% 
+                            c("Parent SEP","Gestational age",
+                              "Pre-pregnancy BMI", "C-section",
+                              "SES variables","Biological variables","All variables")] <- "Covariates added to base model"
+summary.confound$Analysis <- factor(summary.confound$Analysis,
+                                    levels = c("Covariates removed from base model",
+                                               "Covariates added to base model"))
+
+summary.confound$term <- factor(summary.confound$term,
+                                levels = c("Base","Sex","Ethnicity","Education",
+                                           "Smoking","Parity",
+                                           "Maternal age","Birthweight",
+                                           "Parent SEP","Gestational age",
+                                           "Pre-pregnancy BMI", "C-section",
+                                           "SES variables","Biological variables","All variables"))
+
+summary.confound$Adversity.2 <- adv.labels[match(summary.confound$Adversity, names(adv.labels))]
+
+summary.confound$Timing.2 <- gsub("_", " ", stringr::str_to_title(summary.confound$Timing))
+
+summary.confound$unique <- paste(summary.confound$CpG, summary.confound$Adversity.2,
+                                 summary.confound$Timing.2, sep= " | ")
+summary.confound$unique <- factor(summary.confound$unique, levels = unique(summary.confound$unique))
+
+summary.coufound.2 <- summary.confound[!summary.confound$term %in% c("Base","SES variables",
+                                                      "Biological variables","All variables"),]
+
+ggplot(summary.coufound.2,aes(x = term, y= unique, fill = Change))+
+  geom_tile()+
+  theme_classic()+
+  facet_wrap(~Analysis, scales = "free_x")+
+  scale_fill_viridis("Change in\neffect estimate")+
+  ylab("")+
+  xlab("")+
+  geom_text(data = summary.coufound.2[summary.coufound.2$p.value>0.05/41,],
+            aes(label = paste0(round((Percent.change),1),"%")))+
+  geom_text(data = summary.coufound.2[summary.coufound.2$p.value>0.05/41 & summary.coufound.2$Change<c(-0.02),],
+            aes(label = paste0(round((Percent.change),1),"%")), col="white")+
+  # geom_text(data = summary.coufound.2[abs(summary.coufound.2$Percent.change)>25,],
+  #           aes(label = paste0(round((Percent.change),1),"%")))+
+  # geom_text(data = summary.coufound.2[abs(summary.coufound.2$Percent.change)>70,],
+  #           aes(label = paste0(round((Percent.change),1),"%")), col ="white")+
+  theme(axis.text = element_text(size =12), 
+        axis.title = element_text(size =14),
+        axis.text.x = element_text(angle = 45, hjust=1),
+        strip.text = element_text(size =10))+
+  scale_y_discrete(limits=rev)+
+  geom_hline(yintercept =19.5)
+
+dim(summary.confound[abs(summary.confound$Percent.change)>35 & summary.confound$term =="C-section",]) #29
+dim(summary.confound[summary.confound$p.value>0.05/41,])
+length(unique(summary.confound$CpG[summary.confound$p.value>0.05/41]))
+
+
+save(summary.confound, file = "~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age15.confounders_2022-12-07.Rdata")
+
+summary.confound[abs(summary.confound$Percent.change)>20,]
+summary.confound[summary.confound$term =="Base" & summary.confound$CpG %in% c("cg17928317", "cg27558057"),]
+unique(summary.confound$CpG[abs(summary.confound$Percent.change)>10])
+
+
+
+rm(beast, summary.confound, data.combined.15, cpg.order, r2.unique)
+```
+
+*Confounders age 7*
+```{r}
+data.combined.7  <- data.combined[data.combined$Age==7,]
+head(data.combined.7)
+length(unique(data.combined.7$CpG)) #41
+
+head(data.combined)
+data.combined.7$Female <- factor(data.combined.7$Female)
+data.combined.7$White <- factor(data.combined.7$White)
+data.combined.7$Education <- factor(data.combined.7$Education)
+data.combined.7$Smoking <- factor(data.combined.7$Smoking)
+data.combined.7$Parity <- factor(data.combined.7$Parity)
+data.combined.7$Momage <- factor(data.combined.7$Momage)
+
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata",
+     verbose=T)
+
+data.combined.7$SES_parent <- beast$SES_parent[match(data.combined.7$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.7$SES_parent <- factor(data.combined.7$SES_parent)
+
+data.combined.7$BMI_prepreg <- beast$dw042[match(data.combined.7$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.7$gest_age <- beast$bestgest[match(data.combined.7$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.7$gest_age <- ifelse(data.combined.7$gest_age<0, NA, 
+                                    data.combined.7$gest_age)
+
+data.combined.7$csection <- beast$DEL_P4[match(data.combined.7$ID,
+                                                      paste0(beast$cidB1471, 
+                                                             beast$qlet))]
+data.combined.7$csection <- ifelse(data.combined.7$csection ==1, 0,
+                                    ifelse(data.combined.7$csection==2, 1, NA))
+data.combined.7$csection <- as.factor(data.combined.7$csection)
+
+
+
+for(i in cpg.order){
+  if(i == cpg.order[1]){summary.confound.age7 <- data.frame()}
+  print(i)
+  dat <- data.combined.7[data.combined.7$CpG == i,]
+  if(!dat$Timing[1] %in% c("accumulation","recency")){dat$Exposure <- factor(dat$Exposure)}
+  temp <- rbind(tidy(lm(dnam~ Exposure +Female+White+Education+
+                                 Smoking+Parity+Momage+Birthweight, data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          White+Education+Smoking+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+Education+Smoking+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Smoking+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure 
+                        +Female+White+Education+Parity+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Momage+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Birthweight, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage, 
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          SES_parent,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          gest_age,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          BMI_prepreg,
+                        data = dat))[2,],
+                tidy(lm(dnam~ Exposure +
+                          Female+White+Education+Smoking+Parity+Momage+Birthweight+
+                          csection,
+                        data = dat))[2,]
+                )
+  temp$term <- c("Base","Sex","Ethnicity","Education","Smoking",
+                 "Parity","Maternal age","Birthweight",
+                 "Parent SEP","Gestational age","Pre-pregnancy BMI","C-section")
+  temp <- data.frame(temp,
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1], 
+                     Change = temp$estimate - temp$estimate[1], 
+                     Percent.change = round((temp$estimate/temp$estimate[1] -1)*100, 2))
+                     #Stat.change = round((temp$statistic/temp$statistic[1] -1)*100, 2))
+  temp
+  summary.confound.age7 <- rbind(summary.confound.age7, temp)
+  rm(i, temp, dat)
+}
+dim(summary.confound.age7)/41
+head(summary.confound.age7)
+summary(summary.confound.age7$Percent.change)
+summary.confound.age7[which(abs(summary.confound.age7$Percent.change)>2000),]
+min(summary.confound.age7$p.value)
+summary.confound.age7[summary.confound.age7$p.value<0.0012,]
+
+summary.confound.age7$Analysis <- "Covariates removed from base model"
+summary.confound.age7$Analysis[summary.confound.age7$term %in% 
+                                 c("Parent SEP","Gestational age",
+                                   "Pre-pregnancy BMI","C-section")] <- "Covariates added to base model"
+summary.confound.age7$Analysis <- factor(summary.confound.age7$Analysis,
+                                         levels = c("Covariates removed from base model",
+                                                    "Covariates added to base model"))
+
+summary.confound.age7$term <- factor(summary.confound.age7$term, 
+                                      levels = c("Base","Sex","Ethnicity","Education",
+                                           "Smoking","Parity",
+                                           "Maternal age","Birthweight",
+                                           "Parent SEP","Gestational age",
+                                           "Pre-pregnancy BMI","C-section"))
+
+summary.confound.age7$Adversity.2 <- adv.labels[match(summary.confound.age7$Adversity,
+                                                      names(adv.labels))]
+
+summary.confound.age7$Timing.2 <- gsub("_", " ", stringr::str_to_title(summary.confound.age7$Timing))
+
+summary.confound.age7$unique <- paste(summary.confound.age7$CpG, summary.confound.age7$Adversity.2,
+                                      summary.confound.age7$Timing.2, sep= " | ")
+summary.confound.age7$unique <- factor(summary.confound.age7$unique, 
+                                  levels = unique(summary.confound.age7$unique))   
+
+ggplot(summary.confound.age7[summary.confound.age7$term != "Base",], 
+       aes(x = term, y= unique, 
+           fill = Change))+
+  geom_tile()+
+  theme_classic()+
+  facet_wrap(~Analysis, scales="free_x")+
+  scale_fill_viridis("Change in\neffect estimate")+
+  ylab("")+
+  xlab("")+
+  geom_text(data = summary.confound.age7[summary.confound.age7$p.value<0.05/41,],
+           aes(label = paste0(round(Percent.change,1),"%")))+
+  theme(axis.text = element_text(size =12), 
+        axis.title = element_text(size =10),
+        axis.text.x = element_text(angle = 45, hjust=1),
+        strip.text = element_text(size =10))+
+  scale_y_discrete(limits=rev)+
+  geom_hline(yintercept=19.5)
+
+save(summary.confound.age7, file = "~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/age7.confounders_2022-12-07.Rdata")
+
+summary.confound.age7[abs(summary.confound.age7$Percent.change)>200,]
+summary.confound.age7[summary.confound.age7$term =="Base" & 
+                        summary.confound.age7$CpG %in% c("cg17928317", "cg27558057"),]
+summary.confound.age7[summary.confound.age7$term =="Sex" & 
+                        summary.confound.age7$CpG %in% c("cg17928317", "cg27558057"),]
+
+rm(beast, summary.confound.age7, r2.unique, cpg.order, data.combined.7)
+```
+
+*function to pull results from mediation into data.frame*
+```{r}
+#thank you hrbrmstr - https://stackoverflow.com/questions/41582486/how-to-convert-r-mediation-summary-to-data-frame
+extract_mediation_summary <- function (x) { 
+
+  clp <- 100 * x$conf.level
+  isLinear.y <- ((class(x$model.y)[1] %in% c("lm", "rq")) || 
+                   (inherits(x$model.y, "glm") && x$model.y$family$family == 
+                      "gaussian" && x$model.y$family$link == "identity") || 
+                   (inherits(x$model.y, "survreg") && x$model.y$dist == 
+                      "gaussian"))
+
+  printone <- !x$INT && isLinear.y
+
+  if (printone) {
+
+    smat <- c(x$d1, x$d1.ci, x$d1.p)
+    smat <- rbind(smat, c(x$z0, x$z0.ci, x$z0.p))
+    smat <- rbind(smat, c(x$tau.coef, x$tau.ci, x$tau.p))
+    smat <- rbind(smat, c(x$n0, x$n0.ci, x$n0.p))
+
+    rownames(smat) <- c("ACME", "ADE", "Total Effect", "Prop. Mediated")
+
+  } else {
+    smat <- c(x$d0, x$d0.ci, x$d0.p)
+    smat <- rbind(smat, c(x$d1, x$d1.ci, x$d1.p))
+    smat <- rbind(smat, c(x$z0, x$z0.ci, x$z0.p))
+    smat <- rbind(smat, c(x$z1, x$z1.ci, x$z1.p))
+    smat <- rbind(smat, c(x$tau.coef, x$tau.ci, x$tau.p))
+    smat <- rbind(smat, c(x$n0, x$n0.ci, x$n0.p))
+    smat <- rbind(smat, c(x$n1, x$n1.ci, x$n1.p))
+    smat <- rbind(smat, c(x$d.avg, x$d.avg.ci, x$d.avg.p))
+    smat <- rbind(smat, c(x$z.avg, x$z.avg.ci, x$z.avg.p))
+    smat <- rbind(smat, c(x$n.avg, x$n.avg.ci, x$n.avg.p))
+
+    rownames(smat) <- c("ACME (control)", "ACME (treated)", 
+                        "ADE (control)", "ADE (treated)", "Total Effect", 
+                        "Prop. Mediated (control)", "Prop. Mediated (treated)", 
+                        "ACME (average)", "ADE (average)", "Prop. Mediated (average)")
+
+  }
+
+  colnames(smat) <- c("Estimate", paste(clp, "% CI Lower", sep = ""), 
+                      paste(clp, "% CI Upper", sep = ""), "p-value")
+  smat
+
+}
+```
+
+*Mediation by age at pubertal onset (estimated by SITAR)* - No mediation found
+```{r}
+data.combined.15  <- data.combined[data.combined$Age==15,]
+#pubertal onset
+load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Results/Liz/Puberty/Results/2020-05-14_aPHV-estimate-female.Rdata",
+     verbose=T)
+load("/Users/alexlussier/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Results/Liz/Puberty/Results/2020-05-14_aPHV-estimate-male.Rdata",
+     verbose=T)
+apv <- rbind(apv_m, apv_f)
+
+head(apv)
+summary(apv$actual_age_years)
+
+data.combined.15$apv <- apv$actual_age_years[match(data.combined.15$ID, apv$ID)]
+rm(apv, apv_f, apv_m)
+
+
+#with covariates
+data.combined.15.momfix <- data.combined.15[!data.combined.15$Momage==0,]
+data.combined.15.momfix$Momage <- factor(data.combined.15.momfix$Momage)
+
+for(i in cpg.order){
+  if(i == cpg.order[1]){summary.med.apv.cor <- data.frame()}
+  print(i)
+  dat <- data.combined.15.momfix[data.combined.15.momfix$CpG ==i,]
+  if(!dat$Timing[1] %in% c("recency", "accumulation")){dat$Exposure <- factor(dat$Exposure)}
+  
+  mediator <- lm(apv ~ Exposure+Female+White+Education+Smoking+Parity+Birthweight+Momage, 
+                 data = dat)
+  
+  dv <- lm(dnam ~ Exposure+apv+Female+White+Education+Smoking+Parity+Birthweight+Momage, 
+           data = dat)
+  
+  results = mediate(mediator, dv, treat='Exposure', mediator='apv', boot=T)
+  set.seed(17)
+  temp <- extract_mediation_summary(results)
+  temp <- data.frame(temp, 
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1])
+  summary.med.apv.cor <- rbind(summary.med.apv.cor, temp)
+ 
+  rm(temp, i, results, mediator, dv, dat)
+}
+length(unique(summary.med.apv.cor$CpG)) #41
+
+summary.med.apv.cor <- data.frame(Variable = rownames(summary.med.apv.cor),summary.med.apv.cor)
+rownames(summary.med.apv.cor) <- 1:nrow(summary.med.apv.cor)
+summary.med.apv.cor$Variable <- rep(c("ACME","ADE","Total Effect","Prop. Mediated"), 41)
+head(summary.med.apv.cor)
+summary.med.apv.cor[summary.med.apv.cor$Variable=="ACME",]
+summary.med.apv.cor[summary.med.apv.cor$Variable=="Prop. Mediated",]
+
+#formatting
+summary.med.apv.cor$Adversity.2 <- adv.labels[match(summary.med.apv.cor$Adversity,
+                                                    names(adv.labels))]
+summary.med.apv.cor$Timing.2 <- gsub("_", " ", stringr::str_to_title(summary.med.apv.cor$Timing))
+summary.med.apv.cor$unique <- paste(summary.med.apv.cor$CpG, summary.med.apv.cor$Adversity.2, 
+                                    summary.med.apv.cor$Timing.2, sep= " | ")
+summary.med.apv.cor$unique <- factor(summary.med.apv.cor$unique, 
+                                     levels = unique(summary.med.apv.cor$unique))    
+colnames(summary.med.apv.cor)[3:4] <- c("CI.lower","CI.upper")
+
+a<- ggplot(summary.med.apv.cor[summary.med.apv.cor$Variable != "Prop. Mediated",], 
+       aes(x = Estimate, y = unique, col = Variable))+
+  geom_vline(xintercept=0, linetype =3, col ="grey")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower, xmax = CI.upper), position = position_dodge(width = 0.7))+
+  theme_classic()+
+  scale_color_discrete(labels = c("Mediated effect","Direct effect","Total effect"),"")+
+  ylab("")+
+  theme(legend.position = c(0.8, 0.2),
+        axis.text =element_text(size = 10),
+        axis.title =element_text(size = 12))+
+  scale_y_discrete(limits =rev)+
+  geom_hline(yintercept = 19.5)
+
+b <- ggplot(summary.med.apv.cor[summary.med.apv.cor$Variable == "Prop. Mediated",], 
+       aes(x = Estimate*100, y = unique,
+           col = ifelse(p.value<0.05, "p<0.05",
+                        ifelse(p.value<0.1, "p<0.1","NS"))))+
+  geom_vline(xintercept=c(-10, -5, 5, 10), linetype =3, col ="grey")+
+  geom_vline(xintercept=c(0), linetype =3, col ="red")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower*100, xmax = CI.upper*100), 
+                position = position_dodge(width = 0.7))+
+  scale_color_manual(values = c("black","red","darkred"), "Significance")+
+  theme_classic()+
+  ylab("")+
+  xlab("Percent effect explained by mediation")+
+  theme(axis.text.y = element_blank(),
+        legend.position = "none")+
+  geom_text(data= summary.med.apv.cor[summary.med.apv.cor$Variable == "Prop. Mediated" &
+                                    summary.med.apv.cor$p.value<.3,],
+           aes(label = paste0("p=",p.value), x=8,
+               y = unique),
+           col = "black", hjust =0, size =3.5)+
+  scale_y_discrete(limits =rev)+
+  theme(axis.title= element_text(size =12))+
+  geom_hline(yintercept = 19.5)
+b
+
+grid.arrange(a,b, nrow=1, 
+             top = "Mediation by age at Peak Height Velocity")
+
+
+```
+
+*Mediation by BMI*
+```{r}
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata",
+     verbose=T)
+
+#BMI
+data.combined.15$BMI.15 <- beast$fh3019[match(data.combined.15$ID,
+                                              paste0(beast$cidB1471, beast$qlet))]
+data.combined.15$BMI.7 <- beast$f7ms026a[match(data.combined.15$ID,
+                                              paste0(beast$cidB1471, beast$qlet))]
+
+
+#with covariates
+data.combined.15.momfix <- data.combined.15[!data.combined.15$Momage==0,]
+data.combined.15.momfix$Momage <- factor(data.combined.15.momfix$Momage)
+for(i in cpg.order){
+  if(i == cpg.order[1]){summary.med.BMI.15.cor <- data.frame()}
+  print(i)
+  dat <- data.combined.15.momfix[data.combined.15.momfix$CpG ==i,]
+  if(!dat$Timing[1] %in% c("recency", "accumulation")){dat$Exposure <- factor(dat$Exposure)}
+  set.seed(17)
+  mediator <- lm(BMI.15 ~ Exposure+Female+White+Education+Smoking+Parity+Birthweight+Momage, 
+                 data = dat)
+  
+  dv <- lm(dnam ~ Exposure+BMI.15+Female+White+Education+Smoking+Parity+Birthweight+
+             Momage, 
+           data = dat)
+  
+  results = mediate(mediator, dv, treat='Exposure', mediator='BMI.15', boot=T)
+  
+  temp <- extract_mediation_summary(results)
+  temp <- data.frame(temp, 
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1])
+  summary.med.BMI.15.cor <- rbind(summary.med.BMI.15.cor, temp)
+ 
+  rm(temp, i, results, mediator, dv, dat)
+}
+
+summary.med.BMI.15.cor <- data.frame(Variable =
+                                       rownames(summary.med.BMI.15.cor),summary.med.BMI.15.cor)
+rownames(summary.med.BMI.15.cor) <- 1:nrow(summary.med.BMI.15.cor)
+summary.med.BMI.15.cor$Variable <- rep(c("ACME","ADE","Total Effect","Prop. Mediated"), 41)
+head(summary.med.BMI.15.cor)
+min(summary.med.BMI.15.cor[summary.med.BMI.15.cor$Variable=="ACME",]$p.value) #0.042
+summary.med.BMI.15.cor[summary.med.BMI.15.cor$Variable=="Prop. Mediated",]
+summary.med.BMI.15.cor[summary.med.BMI.15.cor$p.value==0.042,]
+summary.med.BMI.15.cor[summary.med.BMI.15.cor$CpG=="cg16907527",] #VEGFA
+min(p.adjust(summary.med.BMI.15.cor$p.value[summary.med.BMI.15.cor$Variable=="ACME"],
+         method="BH"))
+
+
+summary.med.BMI.15.cor$Adversity.2 <- adv.labels[match(summary.med.BMI.15.cor$Adversity,
+                                                    names(adv.labels))]
+summary.med.BMI.15.cor$Timing.2 <- gsub("_", " ", stringr::str_to_title(summary.med.BMI.15.cor$Timing))
+
+summary.med.BMI.15.cor$unique <- paste(summary.med.BMI.15.cor$CpG, summary.med.BMI.15.cor$Adversity.2, 
+                                       summary.med.BMI.15.cor$Timing.2, sep= " | ")
+
+summary.med.BMI.15.cor$unique <- factor(summary.med.BMI.15.cor$unique, 
+                                     levels = unique(summary.med.BMI.15.cor$unique))    
+
+
+colnames(summary.med.BMI.15.cor)[3:4] <- c("CI.lower","CI.upper")
+
+a<- ggplot(summary.med.BMI.15.cor[summary.med.BMI.15.cor$Variable != "Prop. Mediated",], 
+       aes(x = Estimate, y = unique,
+                                col = Variable))+
+  geom_vline(xintercept=0, linetype =3, col ="grey")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower, xmax = CI.upper), position = position_dodge(width = 0.7))+
+  theme_classic()+
+  scale_color_discrete(labels = c("Mediated effect","Direct effect","Total effect"),"")+
+  ylab("")+
+  theme(legend.position = c(0.8, 0.2),
+        axis.text =element_text(size = 10),
+        axis.title =element_text(size = 12))+
+  scale_y_discrete(limits =rev)+
+  geom_hline(yintercept = 19.5)
+a  
+
+b<- ggplot(summary.med.BMI.15.cor[summary.med.BMI.15.cor$Variable == "Prop. Mediated",], 
+       aes(x = Estimate*100, y = unique,
+           col = ifelse(p.value<0.1, "p<0.1","NS")))+
+  geom_vline(xintercept=c(-10, -5, 5, 10), linetype =3, col ="grey")+
+  geom_vline(xintercept=c(0), linetype =3, col ="red")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower*100, xmax = CI.upper*100), 
+                position = position_dodge(width = 0.7))+
+  scale_color_manual(values = c("black","blue"), "Significance")+
+  theme_classic()+
+  ylab("")+
+  xlab("Percent effect explained by mediation")+
+  theme(axis.text.y = element_blank(),
+        legend.position = "none",
+        axis.text =element_text(size = 10),
+        axis.title =element_text(size = 12))+
+  geom_text(data= summary.med.BMI.15.cor[summary.med.BMI.15.cor$Variable == "Prop. Mediated" &
+                                     summary.med.BMI.15.cor$p.value<.1,],
+            aes(label = paste0("p=",p.value), x=13, 
+                y = unique),
+            col = "black", hjust =0, size =3.5)+
+  #xlim(-12,15)+
+  scale_x_continuous(limits = c(-10, 15))+
+  scale_y_discrete(limits =rev)+
+  geom_hline(yintercept = 19.5)
+b
+
+grid.arrange(a,b, ncol =2, 
+             top = "Mediation by BMI at age 15")
+
+```
+
+*Mediation by CRP*
+```{r}
+data.combined.15$CRP.15 <- beast$crp_TF3[match(data.combined.15$ID,
+                                              paste0(beast$cidB1471, beast$qlet))]
+
+#with covariates
+data.combined.15.momfix <- data.combined.15[!data.combined.15$Momage==0,]
+data.combined.15.momfix$Momage <- factor(data.combined.15.momfix$Momage)
+for(i in cpg.order){
+  if(i == cpg.order[1]){summary.med.CRP.15.cor <- data.frame()}
+  print(i)
+  dat <- data.combined.15.momfix[data.combined.15.momfix$CpG ==i,]
+  if(!dat$Timing[1] %in% c("recency", "accumulation")){dat$Exposure <- factor(dat$Exposure)}
+  set.seed(17)
+  mediator <- lm(CRP.15 ~ Exposure+Female+White+Education+Smoking+Parity+Birthweight+Momage, 
+                 data = dat)
+  
+  dv <- lm(dnam ~ Exposure+CRP.15+Female+White+Education+Smoking+Parity+Birthweight+Momage, 
+           data = dat)
+  
+  results = mediate(mediator, dv, treat='Exposure', mediator='CRP.15', boot=T)
+  
+  temp <- extract_mediation_summary(results)
+  temp <- data.frame(temp, 
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1])
+  summary.med.CRP.15.cor <- rbind(summary.med.CRP.15.cor, temp)
+ 
+  rm(temp, i, results, mediator, dv, dat)
+}
+
+summary.med.CRP.15.cor <- data.frame(Variable =
+                                       rownames(summary.med.CRP.15.cor),summary.med.CRP.15.cor)
+rownames(summary.med.CRP.15.cor) <- 1:nrow(summary.med.CRP.15.cor)
+summary.med.CRP.15.cor$Variable <- rep(c("ACME","ADE","Total Effect","Prop. Mediated"), 41)
+head(summary.med.CRP.15.cor)
+summary.med.CRP.15.cor[summary.med.CRP.15.cor$Variable=="ACME",]
+min(summary.med.CRP.15.cor[summary.med.CRP.15.cor$Variable=="ACME",]$p.value) #0.072
+summary.med.CRP.15.cor[summary.med.CRP.15.cor$Variable=="Prop. Mediated",]
+
+summary.med.CRP.15.cor[summary.med.CRP.15.cor$CpG=="cg12096528",] #p=0.088, SLC25A41
+
+#Formatting
+summary.med.CRP.15.cor$Adversity.2 <- adv.labels[match(summary.med.CRP.15.cor$Adversity,
+                                                    names(adv.labels))]
+summary.med.CRP.15.cor$Timing.2 <- gsub("_", " ", stringr::str_to_title(summary.med.CRP.15.cor$Timing))
+summary.med.CRP.15.cor$unique <- paste(summary.med.CRP.15.cor$CpG, summary.med.CRP.15.cor$Adversity.2, 
+                                       summary.med.CRP.15.cor$Timing.2, sep= " | ")
+summary.med.CRP.15.cor$unique <- factor(summary.med.CRP.15.cor$unique, 
+                                     levels = unique(summary.med.CRP.15.cor$unique))    
+colnames(summary.med.CRP.15.cor)[3:4] <- c("CI.lower","CI.upper")
+
+a<- ggplot(summary.med.CRP.15.cor[summary.med.CRP.15.cor$Variable != "Prop. Mediated",], 
+       aes(x = Estimate, y = unique,
+                                col = Variable))+
+  geom_vline(xintercept=0, linetype =3, col ="grey")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower, xmax = CI.upper), position = position_dodge(width = 0.7))+
+  theme_classic()+
+  scale_color_discrete(labels = c("Mediated effect","Direct effect","Total effect"),"")+
+  ylab("")+
+  theme(legend.position = c(0.8, 0.2),
+        axis.text =element_text(size = 10),
+        axis.title =element_text(size = 12))+
+  scale_y_discrete(limits =rev)+
+  geom_hline(yintercept=19.5)
+
+b<- ggplot(summary.med.CRP.15.cor[summary.med.CRP.15.cor$Variable == "Prop. Mediated",], 
+       aes(x = Estimate*100, y = unique,
+           col = ifelse(p.value<0.05, "p<0.05",
+                        ifelse(p.value<=0.1, "p<0.1","NS"))))+
+  geom_vline(xintercept=c(-5, 5), linetype =3, col ="grey")+
+  geom_vline(xintercept=c(0), linetype =3, col ="red")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower*100, xmax = CI.upper*100), 
+                position = position_dodge(width = 0.7))+
+  scale_color_manual(values = c("black","red","blue"), "Significance")+
+  theme_classic()+
+  ylab("")+
+  xlab("Percent effect explained by mediation")+
+  geom_text(data= summary.med.CRP.15.cor[summary.med.CRP.15.cor$Variable == "Prop. Mediated" &
+                                     summary.med.CRP.15.cor$p.value<=.1,],
+            aes(label = paste0("p=",p.value), x=3.5, 
+                y = unique),
+            col = "black", hjust =0, size =3.5)+
+  theme(axis.text.y = element_blank(),
+        legend.position = "none",
+        axis.text =element_text(size = 10),
+        axis.title =element_text(size = 12))+
+  scale_y_discrete(limits =rev)+
+  geom_hline(yintercept=19.5)
+b
+
+grid.arrange(a,b, ncol =2, 
+             top = "Mediation by CRP at age 15")
+
+```
+
+*Mediation by smoking at age 15*
+```{r}
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata")
+
+#summary(factor(ifelse(beast$fh8451<0, NA, beast$fh8451)))
+data.combined.15$Smoking.15 <- beast$fh8450[match(data.combined.15$ID,
+                                              paste0(beast$cidB1471, beast$qlet))]
+data.combined.15$Smoking.15 <- ifelse(data.combined.15$Smoking.15==-8, 0,
+                                      ifelse(data.combined.15$Smoking.15<0, NA,
+                                             ifelse(data.combined.15$Smoking.15 == 2, 0,1)))
+summary(factor(data.combined.15$Smoking.15))
+
+
+
+#with covariates
+data.combined.15.momfix <- data.combined.15[!data.combined.15$Momage==0,]
+data.combined.15.momfix$Momage <- factor(data.combined.15.momfix$Momage)
+
+for(i in cpg.order){
+  if(i ==cpg.order[1]){smokingPrev <- data.frame()}
+  print(i)
+  dat <- data.combined.15.momfix[data.combined.15.momfix$CpG ==i,]
+  if(!dat$Timing[1] %in% c("recency", "accumulation")){dat$Exposure <- factor(dat$Exposure)}
+  
+  dat2 <- dat %>% dplyr::select(Smoking.15, Exposure, Female, White, 
+                                     Education, Smoking, Parity, Birthweight, Momage)
+  dat2 <- dat2[complete.cases(dat),]
+  smokingPrev <- rbind(smokingPrev, 
+                       data.frame(CpG = i,
+                                  adv = dat$Adversity[1],
+                                  timing = dat$Timing[1],
+                                  total = nrow(dat),
+                                  no = table(dat$Smoking.15)[1],
+                                  yes = table(dat$Smoking.15)[2]))
+  rm(dat, dat2)
+}
+smokingPrev$unique <- paste(smokingPrev$adv, smokingPrev$timing, sep="-")
+smokingPrev$prev <- smokingPrev$yes/smokingPrev$total
+summary(smokingPrev$prev)
+summary(unique(smokingPrev[,-1])$prev)
+
+for(i in cpg.order){
+  if(i == cpg.order[1]){summary.med.Smoking.15.cor <- data.frame()}
+  print(i)
+  dat <- data.combined.15.momfix[data.combined.15.momfix$CpG ==i,]
+  if(!dat$Timing[1] %in% c("recency", "accumulation")){dat$Exposure <- factor(dat$Exposure)}
+  set.seed(17)
+  mediator <- lm(Smoking.15 ~ Exposure+Female+White+Education+Smoking+Parity+Birthweight+Momage, 
+                 data = dat)
+  
+  dv <- lm(dnam ~ Exposure+Smoking.15+Female+White+
+             Education+Smoking+Parity+Birthweight+Momage, 
+           data = dat)
+  
+  results = mediate(mediator, dv, treat='Exposure', mediator='Smoking.15', boot=T)
+  
+  temp <- extract_mediation_summary(results)
+  temp <- data.frame(temp, 
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1])
+  summary.med.Smoking.15.cor <- rbind(summary.med.Smoking.15.cor, temp)
+ 
+  rm(temp, i, results, mediator, dv, dat)
+}
+
+summary.med.Smoking.15.cor <- data.frame(Variable =
+                                           rownames(summary.med.Smoking.15.cor),
+                                         summary.med.Smoking.15.cor)
+rownames(summary.med.Smoking.15.cor) <- 1:nrow(summary.med.Smoking.15.cor)
+summary.med.Smoking.15.cor$Variable <- rep(c("ACME","ADE","Total Effect","Prop. Mediated"), 41)
+head(summary.med.Smoking.15.cor)
+summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$Variable=="ACME",]
+min(summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$Variable=="ACME",]$p.value) #0.276
+summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$Variable=="Prop. Mediated",]
+
+summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$CpG=="cg12096528",] #p=0.072, SLC25A41
+
+#Formatting
+summary.med.Smoking.15.cor$Adversity.2 <- adv.labels[match(summary.med.Smoking.15.cor$Adversity,
+                                                    names(adv.labels))]
+summary.med.Smoking.15.cor$Timing.2 <- gsub("_", " ", stringr::str_to_title(summary.med.Smoking.15.cor$Timing))
+
+summary.med.Smoking.15.cor$unique <- paste(summary.med.Smoking.15.cor$CpG, summary.med.Smoking.15.cor$Adversity.2, summary.med.Smoking.15.cor$Timing.2,
+                                 sep= " | ")
+summary.med.Smoking.15.cor$unique <- factor(summary.med.Smoking.15.cor$unique, 
+                                     levels = unique(summary.med.Smoking.15.cor$unique))    
+colnames(summary.med.Smoking.15.cor)[3:4] <- c("CI.lower","CI.upper")
+
+a<- ggplot(summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$Variable != "Prop. Mediated",], 
+       aes(x = Estimate, y = unique,
+                                col = Variable))+
+  geom_vline(xintercept=0, linetype =3, col ="grey")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower, xmax = CI.upper), position = position_dodge(width = 0.7))+
+  theme_classic()+
+  scale_color_discrete(labels = c("Mediated effect","Direct effect","Total effect"),"")+
+  ylab("")+
+  theme(legend.position = c(0.8, 0.2),
+        axis.text =element_text(size = 10),
+        axis.title =element_text(size = 12))+
+  scale_y_discrete(limits =rev)
+
+b<- ggplot(summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$Variable == "Prop. Mediated",], 
+       aes(x = Estimate*100, y = unique,
+           col = ifelse(p.value<0.05, "p<0.05",
+                        ifelse(p.value<=0.1, "p<0.1","NS"))))+
+  geom_vline(xintercept=c(-10,-5,5, 10), linetype =3, col ="grey")+
+  geom_vline(xintercept=c(0), linetype =3, col ="red")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower*100, xmax = CI.upper*100), 
+                position = position_dodge(width = 0.7))+
+  scale_color_manual(values = c("black","blue"), "Significance")+
+  theme_classic()+
+  ylab("")+
+  xlab("Percent effect explained by mediation")+
+  geom_text(data= summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$Variable == 
+                                           "Prop. Mediated" &
+                                     summary.med.Smoking.15.cor$p.value<=0.3,],
+            aes(label = paste0("p=",p.value), x=10, 
+                y = unique),
+            col = "black", hjust =0, size =3.5)+
+  xlim(-10,15)+
+  theme(axis.text.y = element_blank(),
+        legend.position = "none",
+        axis.text =element_text(size = 10),
+        axis.title =element_text(size = 12))+
+  scale_y_discrete(limits =rev)
+b
+
+grid.arrange(a,b, ncol =2, 
+             top = textGrob("Mediation by daily smoking at age 15"))
+
+```
+
+*Saving mediation results*
+```{r}
+save(summary.med.apv.cor, summary.med.BMI.15.cor, 
+     summary.med.CRP.15.cor, summary.med.Smoking.15.cor, 
+     file = "~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/aim3_mediation_results_2022-08-26.Rdata")
+
+rm(summary.med.apv.cor, summary.med.BMI.15.cor, 
+     summary.med.CRP.15.cor, summary.med.Smoking.15.cor)
+```
+
+*Top mediation results*
+```{r}
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/ALSPAC/Epigenetic/Paper Draft - Adversity->DNAm age17/Pacruelty_rerun/Results/aim3_mediation_results_2022-08-26.Rdata", verbose=T)
+head(  summary.med.BMI.15.cor)
+
+summary.med.BMI.15.cor[summary.med.BMI.15.cor$Variable =="Prop. Mediated" &
+                         summary.med.BMI.15.cor$p.value <0.1,]
+p.adjust(summary.med.BMI.15.cor$p.value[summary.med.BMI.15.cor$Variable =="Prop. Mediated"])
+
+summary.med.CRP.15.cor[summary.med.CRP.15.cor$Variable =="Prop. Mediated" & 
+                         summary.med.CRP.15.cor$p.value <0.1,]
+p.adjust(summary.med.CRP.15.cor$p.value[summary.med.CRP.15.cor$Variable =="Prop. Mediated"])
+
+summary.med.apv.cor[summary.med.apv.cor$Variable =="Prop. Mediated" & 
+                         summary.med.apv.cor$p.value <0.1,]
+summary.med.Smoking.15.cor[summary.med.Smoking.15.cor$Variable =="Prop. Mediated" & 
+                         summary.med.Smoking.15.cor$p.value <0.1,]
+
+
+
+```
+
+
+*Checking N for mediation*
+```{r}
+#checking N
+
+for(i in unique(data.combined.15.momfix$CpG)){
+  if(i == unique(data.combined.15.momfix$CpG)[1]){complete.dat <- data.frame()}
+  print(i)
+  dat <- data.combined.15.momfix[data.combined.15.momfix$CpG ==i,]
+  covars <- c("Exposure","Female","White", "Education",
+            "Smoking","Parity","Birthweight","Momage")
+  mediators <- c("apv","BMI.15", "CRP.15", "Smoking.15")
+  
+  complete.cases(dat[,])
+  a <- data.frame(CpG = i,
+                  a = sum(complete.cases(dat[,c(covars, "apv")])),
+                  b = sum(complete.cases(dat[,c(covars, "BMI.15")])),
+                  c = sum(complete.cases(dat[,c(covars, "CRP.15")])),
+                  d = sum(complete.cases(dat[,c(covars, "Smoking.15")]))
+                  )
+  colnames(a)[2:5] <- mediators
+  complete.dat <- rbind(complete.dat, a)
+  
+  rm(a, dat, covars, mediators)
+}
+summary(complete.dat[,-1]) 
+ #      apv            BMI.15          CRP.15        Smoking.15   
+ # Min.   :605.0   Min.   :569.0   Min.   :491.0   Min.   :566.0  
+ # 1st Qu.:634.0   1st Qu.:597.0   1st Qu.:523.0   1st Qu.:593.0  
+ # Median :634.0   Median :597.0   Median :523.0   Median :593.0  
+ # Mean   :632.2   Mean   :596.1   Mean   :520.1   Mean   :591.6  
+ # 3rd Qu.:639.0   3rd Qu.:609.0   3rd Qu.:534.0   3rd Qu.:600.0  
+ # Max.   :654.0   Max.   :618.0   Max.   :542.0   Max.   :613.0  
+
+
+rm(i, beast, complete.dat, a,b, r2.unique, cpg.order, data.combined.15.momfix)
+```
+
+*Mediation by DNAm to SMFQ - not included*
+```{r}
+load("~/Dropbox (Partners HealthCare)/Dunn_shared/4- Master Files/ALSPAC_beast20220124.Rdata",
+        verbose=T)
+#smfq_21
+data.combined.15$smfq_21 <- beast$SMFQ_21y_cc[match(data.combined.15$ID,
+                                                    paste0(beast$cidB1471, beast$qlet))]
+
+data.combined.15$smfq_18 <- beast$SMFQ_18y_cc[match(data.combined.15$ID,
+                                                    paste0(beast$cidB1471, beast$qlet))]
+
+for(i in unique(data.combined.15$CpG)){
+  if(i == unique(data.combined.15$CpG)[1]){summary.med.smfq <- data.frame()}
+  print(i)
+  dat <- data.combined.15[data.combined.15$CpG ==i,]
+  dat  <- dat[!is.na(dat$smfq_18),]
+  set.seed(17)
+  mediator <- lm(dnam ~ Exposure, data = dat)
+  dv <- lm(smfq_18 ~ Exposure+dnam, data = dat)
+  results = mediate(mediator, dv, treat='Exposure', mediator='dnam', boot=T)
+  
+  temp <- extract_mediation_summary(results)
+  temp <- data.frame(temp, 
+                     CpG = dat$CpG[1],
+                     Adversity = dat$Adversity[1],
+                     Timing = dat$Timing[1])
+  summary.med.smfq <- rbind(summary.med.smfq, temp)
+ 
+  rm(temp, i, results, mediator, dv, dat)
+}
+summary.med.smfq
+
+summary.med.smfq <- data.frame(Variable = rownames(summary.med.smfq),summary.med.smfq)
+rownames(summary.med.smfq) <- 1:nrow(summary.med.smfq)
+summary.med.smfq$Variable <- rep(c("ACME","ADE","Total Effect","Prop. Mediated"), 41)
+head(summary.med.smfq)
+
+summary.med.smfq[summary.med.smfq$Variable=="ACME",]
+min(summary.med.smfq[summary.med.smfq$Variable=="ACME",]$p.value) #0.046
+summary.med.smfq[summary.med.smfq$p.value<0.05,]
+
+colnames(summary.med.smfq)[3:4]  <- c("CI.lower","CI.upper")
+a<- ggplot(summary.med.smfq[summary.med.smfq$Variable != "Prop. Mediated",], 
+       aes(x = Estimate, y = paste(CpG, Adversity, Timing, sep =" | "),
+                                col = Variable))+
+  geom_vline(xintercept=0, linetype =3, col ="grey")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower, xmax = CI.upper), position = position_dodge(width = 0.7))+
+  theme_classic()+
+  scale_color_discrete(labels = c("Mediated effect","Direct effect","Total effect"),"")+
+  ylab("")+
+  theme(legend.position = c(0.8, 0.2))
+
+b<- ggplot(summary.med.smfq[summary.med.smfq$Variable == "Prop. Mediated",], 
+       aes(x = Estimate, y = paste(CpG, Adversity, Timing, sep =" | "),
+           col = ifelse(p.value<0.05, "p<0.05",
+                        ifelse(p.value<=0.1, "p<0.1","NS"))))+
+  geom_vline(xintercept=c(-10, -5, 5, 10), linetype =3, col ="grey")+
+  geom_vline(xintercept=c(0), linetype =3, col ="red")+
+  geom_point(position = position_dodge(width = 0.7), shape =3, size= 1)+
+  geom_errorbar(aes(xmin = CI.lower*100, xmax = CI.upper*100), 
+                position = position_dodge(width = 0.7))+
+  scale_color_manual(values = c("black","blue"), "Significance")+
+  theme_classic()+
+  ylab("")+
+  xlab("Percent effect explained by mediation")+
+  theme(axis.text.y = element_blank(),
+        legend.position = "none")+
+  geom_text(data= summary.med.smfq[summary.med.smfq$Variable == "ACME" &
+                                     summary.med.smfq$p.value<=.1,],
+            aes(label = paste0("p=",p.value), x=800, 
+                y = paste(CpG, Adversity, Timing, sep =" | ")),
+            col = "black", hjust =0, size =3.5)
+b
+
+grid.arrange(a,b, ncol =2, 
+             top = "Mediation Adversity - DNAm - SMFQ 18y")
+
+rm(a, b, beast, summary.med.smfq, extract_mediation_summary)
+```
+
+
+
