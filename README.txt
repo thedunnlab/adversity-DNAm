@@ -34,4 +34,4 @@ Scripts to analyze the results from the SLCMA and generate the figures
 
 
 Please reach out to alussier[at]mgh.harvard.edu or edunn2[at]mgh.harvard.edu for summary statistics or further details of these analyses. 
-
+PS - these documents can also be found here github.com/alussier17/alussier_scripts/adversity-DNAm/
